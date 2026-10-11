@@ -55,25 +55,41 @@ container too: the script mounts the file's directory). Requirements:
   (Feature 6 merges 8 adjacent chunks).
 - The words "data pipeline" and "architecture" must be spoken in **every** 2 s window,
   because each chunk is transcribed on its own (Feature 6 expects every chunk 42..49 to
-  match). Suggested script, read at a normal pace and repeated:
-  "Data pipeline architecture. A data pipeline moves events from ingestion to storage.
-  This data pipeline architecture uses streams and workers."
+  match). Chunks are cut every 2 s from the start, so the reliable way is one complete
+  phrase per 2 s slot: "Data pipeline architecture.", padded with silence to exactly 2.0 s
+  and repeated. Continuous prose does not work: a longer sentence spreads the words over
+  several chunks and splits words at the boundaries (checked 2026-10-12: 2/8 chunks passed).
 - Licence: record it yourself or use TTS output you are allowed to redistribute
   internally. Don't commit it unless the licence allows; keep it under 2 MB.
 
 Ways to produce it:
 
 ```sh
-# macOS
-say -v Samantha -r 170 -o tests/fixtures/speech/data_pipelines_en.aiff \
-  "Data pipeline architecture. A data pipeline moves events from ingestion to storage. ..."
-# Linux
-espeak-ng -v en-us -s 150 -w tests/fixtures/speech/data_pipelines_en.wav "Data pipeline architecture. ..."
-# or piper (better quality): echo "..." | piper --model en_US-lessac-medium --output_file .../data_pipelines_en.wav
+# 1. One phrase, about 1.45 s (macOS; on Linux use piper or espeak-ng -w instead of say)
+say -v Samantha -r 200 -o tests/data/phrase.aiff "Data pipeline architecture."
+# 2. 0.25 s lead-in, pad to exactly 2.0 s, repeat 18 times (36 s, 18 chunks)
+tests/ffmpeg-docker.sh -y -i tests/data/phrase.aiff -af "adelay=250:all=1,apad=whole_dur=2" \
+  -t 2 -ar 22050 -ac 1 tests/data/phrase_2s.wav
+tests/ffmpeg-docker.sh -y -stream_loop 17 -i tests/data/phrase_2s.wav -c:a pcm_s16be \
+  tests/fixtures/speech/data_pipelines_en.aiff
 ```
+
+The phrase must end well before 2.0 s, because chunk lengths vary by about ±0.04 s
+(1.96 to 2.01 s). Check the margins with
+`tests/ffmpeg-docker.sh -i tests/data/phrase_2s.wav -af silencedetect=n=-40dB:d=0.1 -f null -`.
+The clip above has about 0.26 s of silence before the phrase and 0.31 s after it.
 
 The script then builds `speech/speech_data_pipelines_en.mp4`, cuts it into
 `speech/chunks/*.ts` like the Producer would, and copies the first chunk to
-`chunk_speech_en.ts`. Before relying on a TTS clip, check that faster-whisper `small`
-transcribes it with the expected words and detects `en`. Robotic espeak voices sometimes
-come out with the wrong language on 2 s clips (spec A17).
+`chunk_speech_en.ts`. Before relying on a clip, check every chunk with faster-whisper
+`small` (`make -C tests tools-image` once, then):
+
+```sh
+docker run --rm -v af-whisper-cache:/root/.cache \
+  -v "$PWD/tests/fixtures/media/speech/chunks:/chunks:ro" affogato/tools:dev \
+  python -I /tools/transcribe_chunks.py /chunks 0 7
+```
+
+It fails unless each chunk is detected as `en` and contains both words. The clip above
+passed 8/8 ("Data Pipeline Architecture", en 0.98) on 2026-10-12. Robotic espeak voices
+sometimes come out with the wrong language on 2 s clips (spec A17).

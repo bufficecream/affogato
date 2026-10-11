@@ -9,6 +9,8 @@
 #   make manifests-lint   validate tests/kind manifests with kubeconform (Docker, no cluster)
 #   make kind-up          create the kind cluster
 #   make kind-down        delete it
+#   make kind-preload     pull third-party images once (kind/images.txt) and load them into kind
+#   make tools-image      build the local af-tools image (ffmpeg + faster-whisper, tools/Dockerfile)
 #   make image            build the runner image
 #   make acceptance       kind load image + run in-cluster Job, excluding @load
 #   make load             same, only @load scenarios (dedicated load runs)
@@ -31,6 +33,7 @@ GODOG_STRICT  ?= false
 FFMPEG        ?=
 FFPROBE       ?=
 FIXTURES_DOCKER ?= 0
+TOOLS_IMAGE   ?= affogato/tools:dev
 FIXTURES_DIR  ?= $(CURDIR)/fixtures/media
 KUBECONFORM_IMAGE ?= ghcr.io/yannh/kubeconform:v0.6.7
 KUBE_SCHEMA_VERSION ?= 1.33.0
@@ -39,7 +42,7 @@ ROOT          := $(abspath $(CURDIR)/..)
 
 export NAMESPACE GODOG_STRICT KUBECTL
 
-.PHONY: unit vet acceptance-dry fixtures fixtures-verify manifests-lint kind-up kind-down image kind-load acceptance load acceptance-host
+.PHONY: unit vet acceptance-dry fixtures fixtures-verify manifests-lint kind-up kind-down kind-preload tools-image image kind-load acceptance load acceptance-host
 
 unit:
 	cd $(ACC) && $(GO) test -count=1 ./internal/... ./steps/...
@@ -76,6 +79,12 @@ kind-up:
 
 kind-down:
 	$(KIND) delete cluster --name $(KIND_CLUSTER)
+
+kind-preload:
+	KIND=$(KIND) DOCKER=$(DOCKER) ./kind/preload-images.sh $(KIND_CLUSTER)
+
+tools-image:
+	$(DOCKER) build -t $(TOOLS_IMAGE) tools
 
 image:
 	$(DOCKER) build -f $(ACC)/Dockerfile -t $(IMAGE) $(ROOT)

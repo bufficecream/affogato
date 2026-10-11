@@ -58,11 +58,13 @@ The first run downloads the image and modules. Later runs take a few seconds.
 | `fixtures-verify` | Re-runs only the fixture verifier | Docker or host ffmpeg | yes |
 | `manifests-lint` | Validates `tests/kind/*.yaml` with kubeconform (`ghcr.io/yannh/kubeconform:v0.6.7`, Kubernetes 1.33 schemas). The Job's placeholders are substituted first. The kind `Cluster` config has no schema and is reported as skipped. Downloads schemas, so it needs network but no cluster | Docker | yes |
 | `image` | Builds the runner image `affogato/acceptance:dev` from `tests/acceptance/Dockerfile` (build context: repository root). The build runs vet and the unit tests, compiles the test binary, generates and verifies the fixtures with the pinned ffmpeg image, and adds kubectl v1.36.1 (checksum-verified). The image runs as uid 65532 | Docker | yes |
-| `kind-up` | Creates kind cluster `affogato` (`KIND_NODE_IMAGE` pins the node image) and namespace `affogato` | kind, kubectl | **no** |
+| `kind-up` | Creates kind cluster `affogato` (`KIND_NODE_IMAGE` pins the node image) and namespace `affogato` | kind, kubectl | yes (kind v0.33.0, node v1.37.0) |
 | `kind-down` | Deletes the cluster | kind | **no** |
-| `kind-load` | `image`, then `kind load docker-image` | kind | **no** |
+| `kind-preload` | Pulls the third-party images in `kind/images.txt` once (digest-checked) and loads them into the cluster by tag, so a new cluster pulls nothing over the network. MinIO is not listed: it no longer publishes images | kind, Docker | yes |
+| `kind-load` | `image`, then `kind load docker-image` | kind | yes |
 | `acceptance` | `kind-load`, then runs the in-cluster Job (`kind/run-job.sh`) with tags `~@load`, streams logs, exits with the Job result | kind cluster + chart | **no** |
 | `load` | Same, only `@load` scenarios (Job `af-acceptance-load`) | kind cluster + chart | **no** |
+| `tools-image` | Builds the local `affogato/tools:dev` image (`tools/Dockerfile`: ffmpeg + faster-whisper) for checking the speech fixture, see section 4. Whisper weights are cached in the `af-whisper-cache` volume | Docker | yes |
 | `acceptance-host` | Runs godog from the host against port-forwarded services (`~@load`) | cluster + `kind/port-forward.sh` + Go | **no** |
 
 Makefile knobs: `GO` (default `go`), `FFMPEG`, `FFPROBE`, `FIXTURES_DOCKER` (0/1),
@@ -123,19 +125,18 @@ recording about data pipelines at
 `tests/fixtures/speech/data_pipelines_en.{wav,m4a,aiff,mp3}`, or set
 `SPEECH_SRC=/path/to/file`. Audio files in that folder are git-ignored. Requirements: at
 least 16 s, and the words "data pipeline" and "architecture" in every 2 s window (each
-chunk is transcribed on its own). See `tests/fixtures/README.md` for a script to read.
-On macOS a TTS clip works for the generator:
+chunk is transcribed on its own). Continuous prose fails that rule; use one phrase per 2 s
+slot. `tests/fixtures/README.md` has the recipe (macOS `say` + the pinned ffmpeg) and the
+reasons. Then:
 
 ```sh
-T="Data pipeline architecture. A data pipeline moves events from ingestion to storage. This data pipeline architecture uses streams and workers."
-say -v Samantha -r 170 -o tests/fixtures/speech/data_pipelines_en.aiff "$T $T $T $T"
 make -C tests fixtures      # now also builds speech/ and chunk_speech_en.ts
 ```
 
-Verified with a clip outside the repo (`SPEECH_SRC=/tmp/…/clip.aiff`): 18 speech chunks,
-the first 8 audible, 115/115 checks. The verifier does **not** check what is said. Before
-relying on a clip, confirm with faster-whisper `small` that every chunk 0..7 transcribes
-with the expected words and language `en`. Without a clip the speech checks print `SKIP`;
+Verified 2026-10-12 with that recipe: 18 speech chunks, 115/115 checks, and 8/8 chunks
+transcribed by faster-whisper `small` as "Data Pipeline Architecture" (en 0.98). The
+verifier does **not** check what is said; `tools/transcribe_chunks.py` (in the
+`tools-image`) does. Without a clip the speech checks print `SKIP`;
 `FIXTURES_STRICT_SPEECH=1` turns that into a failure (use it in CI once a clip is
 committed or provided).
 
@@ -190,11 +191,26 @@ The feature files must stay byte-identical to the spec. `TestFeaturesMatchSpec` 
 `make unit`) fails if they drift. To re-sync, change the spec and copy the Gherkin blocks
 back, keeping the two comment lines and the tag line at the top of each file.
 
-## 6. Running against kind (UNVERIFIED: kind is not installed on the dev machine yet)
+## 6. Running against kind (partly verified)
 
-None of these commands has been run. The Affogato Helm chart does not exist yet. The
+Verified on 2026-10-11 (kind v0.33.0, node v1.37.0, arm64): `kind-up`, `kind-preload`,
+`kind-load`, and the runner Job itself. With a placeholder `affogato-minio` Secret the Job
+started and reported 23 scenarios pending (`~@load`), so the RBAC, Job template, image
+loading and `/fixtures` work. Without that Secret the pod stays in
+`CreateContainerConfigError`; the chart must create it.
+
+The Affogato Helm chart does not exist yet, so nothing has run against real services. The
 service names, secret names and `AF_WORKLOAD_*` defaults in `kind/acceptance-job.yaml`,
 `kind/port-forward.sh` and `internal/config` are placeholders until it does.
+
+Object storage is undecided: MinIO no longer publishes images on Docker Hub or Quay
+(checked 2026-10-11). The options are building MinIO from source, a community image, or
+another S3-compatible store; the `affogato-minio` Secret and `AF_MINIO_*` names follow that
+decision.
+
+Third-party images (`kind/images.txt`) are preloaded by tag only, so `values-kind.yaml`
+must reference them by tag with `imagePullPolicy: IfNotPresent`. A `tag@digest` reference
+fails on the node, because loading one platform drops the multi-arch index digest.
 
 Intended flow:
 

@@ -1,0 +1,12 @@
+# Third-party images pre-pulled on the host and `kind load`ed into the cluster, so a new
+# cluster never pulls them again over the network (make -C tests kind-preload).
+# One image per line, tag + digest. Checked 2026-10-11. The preload script verifies the
+# digest on the host, then loads only the node's platform by tag. That drops the multi-arch
+# index digest, so values-kind.yaml must reference these images by TAG ONLY with
+# imagePullPolicy IfNotPresent (a tag@digest ref makes the node pull again).
+#
+# MinIO: no image published on Docker Hub or Quay any more (checked 2026-10-11). Undecided,
+# see the object-storage note in tests/README.md section 6.
+nats:2.15.0-alpine@sha256:ac8f88a6494bffc2c2a5289a0ca61cb28a9145c11ba5677cf24265d07f46d8d4
+natsio/nats-box:0.20.0@sha256:d2f04223f40e016f77922a8115d34b0cd5fad2ec10b19b39316ae92d07f3d295
+qdrant/qdrant:v1.19.2@sha256:b7b0444c4c351c970b98e90a6f89c2ee4287c65b44e52b4cb503fa5b2aa927ad
