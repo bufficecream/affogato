@@ -128,7 +128,7 @@ func pointArg(ctx context.Context, raw string) (uuid.UUID, error) {
 	if err != nil {
 		return uuid.Nil, err
 	}
-	return contracts.PointIDFromName(w(ctx).Suite.Cfg.PointIDNamespace, s)
+	return contracts.PointIDFromName(s)
 }
 
 // segmentURIArg validates a playlist segment URI such as "000003.ts" and returns its seq.
@@ -165,9 +165,11 @@ func intList(s string) ([]int, error) {
 	return out, nil
 }
 
+// seqArg validates a chunk number from step text against the per-video cap (spec A13:
+// chunk_seq 0..7999), which is tighter than the seq6 format limit.
 func seqArg(n int) (uint32, error) {
-	if n < 0 || n > contracts.MaxChunkSeq {
-		return 0, fmt.Errorf("chunk_seq %d out of range", n)
+	if err := contracts.ValidateChunkSeq(int64(n)); err != nil {
+		return 0, err
 	}
 	return uint32(n), nil
 }

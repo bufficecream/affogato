@@ -33,9 +33,9 @@ Feature: Video finalization
     And GET "/api/v1/videos/V/hls/src/playlist.m3u8" returns 200
 
   Scenario: An abandoned upload is force-finalized after the idle timeout
-    Given the Stream Worker runs with FINALIZE_IDLE_TIMEOUT "5m"
+    Given the Stream Worker runs with FINALIZE_IDLE_TIMEOUT "10s"
     And chunks 0, 1 and 3 of video "V" are READY and no "VideoIngestCompleted" has been published
-    When no event for video "V" arrives for 5 minutes
+    When no event for video "V" arrives for 10 seconds
     Then the video is finalized with finalize_reason IDLE_TIMEOUT
     And the static playlist lists "000000.ts", "000001.ts" and "000003.ts" with "#EXT-X-DISCONTINUITY" before "000003.ts"
     And the playlist ends with "#EXT-X-ENDLIST"

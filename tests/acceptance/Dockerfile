@@ -5,6 +5,8 @@
 
 ARG GO_VERSION=1.26
 ARG DEBIAN=bookworm
+# Keep in sync with FFMPEG_IMAGE in tests/ffmpeg-docker.sh.
+ARG FFMPEG_IMAGE=linuxserver/ffmpeg:version-7.1.1-cli@sha256:aea59a11c54291ac456bb2d67000445e5a8994f70bc3d96cdc29f022fbbf89fb
 
 # ---- test binary ----
 FROM golang:${GO_VERSION}-${DEBIAN} AS build
@@ -18,11 +20,11 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
     CGO_ENABLED=0 go test -c -o /out/acceptance.test .
 
 # ---- media fixtures (generated, never committed) ----
-FROM debian:${DEBIAN}-slim AS fixtures
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# Same pinned ffmpeg as tests/ffmpeg-docker.sh, so in-cluster fixtures match local ones.
+# make_fixtures.sh runs verify_fixtures.sh, so a bad fixture fails the build.
+FROM ${FFMPEG_IMAGE} AS fixtures
 COPY tests/fixtures/ /fixtures-src/
-RUN bash /fixtures-src/make_fixtures.sh /fixtures
+RUN FP_IN_FFMPEG_CONTAINER=1 bash /fixtures-src/make_fixtures.sh /fixtures
 
 # ---- kubectl (checksum-verified) for fault injection ----
 FROM debian:${DEBIAN}-slim AS kubectl
@@ -41,10 +43,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
 #                COPY --from=fpctl /fpctl /usr/local/bin/fpctl
 
 # ---- runtime ----
-FROM debian:${DEBIAN}-slim
-# ffprobe: remux verification (Feature 1); ca-certificates for TLS endpoints.
-RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
-    && rm -rf /var/lib/apt/lists/*
+# The pinned ffmpeg image already has ffprobe (remux verification, Feature 1) and CA
+# certificates, so the runner needs no apt step and uses the same ffprobe as the fixtures.
+FROM ${FFMPEG_IMAGE}
 COPY --from=kubectl /kubectl /usr/local/bin/kubectl
 COPY --from=fixtures /fixtures /fixtures
 COPY --from=build /out/acceptance.test /acceptance/acceptance.test

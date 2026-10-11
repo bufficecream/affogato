@@ -1,7 +1,8 @@
 # FramePulse Test Plan
 
-Status: draft by the QA agent, 2026-10-11. Acceptance criteria are the Gherkin features in
-`framepulse_spec.md` section 4; contracts are `docs/architecture-review.md` Part B.
+Status: draft by the QA agent, 2026-10-11, re-synced with spec v3.1 (G1–G6 resolved).
+Acceptance criteria are the Gherkin features in `framepulse_spec.md` section 4; contracts
+are `docs/architecture-review.md` Part B. How to run the suite: `tests/README.md`.
 Testing is Kubernetes-only (spec A10): unit tests without infrastructure, acceptance tests
 with godog on a local `kind` cluster, `@load` in dedicated runs only.
 
@@ -23,11 +24,19 @@ entry: inputs (`video_id`, `chunk_seq`, `rendition`, `consumer`, `original_strea
 and expected outputs: subjects, the 5 `Nats-Msg-Id` forms plus the redrive form, all
 object keys, the `HLS_INDEX` key, the Qdrant point ID, API paths, and the
 `timestamp` string for `start_ms/end_ms` pairs. Required cases:
-- `chunk_seq` 0, 5, 42, 999999; seq above 999999 must be rejected by every builder
-  (the spec defines no 7-digit form);
+- `chunk_seq` 0, 5, 42, 7999, 8000, 999999: key builders format up to 999999 and reject
+  anything above (no 7-digit form, B2); event validation rejects `chunk_seq` ≥ 8000 and
+  `chunk_count` > 8000 (spec A13);
 - invalid `video_id`s (uppercase, v4, braces, trailing newline, `*`, `>`, `.`, `/`):
   validators reject them in all three languages;
-- the point-ID namespace UUID (**not yet defined**, see G1);
+- the point-ID namespace `c1907ffe-0c06-4077-8866-08fb8d658b77` (spec A18, B3) with the B3
+  golden IDs (`…5e6f:000000` → `ce06a6cc-f9c3-5d9f-8bd0-c7212687ea4d`, `…5e6f:000042` →
+  `b5e27970-263d-5af6-ba86-f5345023df69`); the acceptance module checks the same values
+  (`TestPointIDGolden`);
+- the four per-video filter subjects (B1 "Per-video filters"); the acceptance module pins
+  them in `TestFilterSubjectsAreTheFourDocumented`;
+- the `Fp-Test-Fault` grammar (B1): valid values parse; unknown fault/parameter, missing
+  `consumer`, `deliveries` 0/negative/non-canonical are rejected (`TestTestFaultValue`).
 - every `*.binpb` decodes in Go, Rust and Python; unknown fields and unknown enum values are
   preserved or tolerated (evolution rules).
 
@@ -41,6 +50,15 @@ The acceptance module's `internal/contracts` builders must also be tested agains
   audio handled per decision (G9); corrupt/empty/non-media input rejected before any upload.
 - segmenting: `-c copy` cut (no re-encode), 0-based contiguous seq, every chunk starts on
   an IDR, `media_time` measured from PTS (never assumed 2000 ms), last short chunk.
+  **Must** test an input with B-frames and keyframes exactly every 2 s: with plain
+  `-f segment -segment_time 2` ffmpeg 7.1.1 misses the first cut (chunk 0 is ~4 s, a 12 s
+  input gives 5 chunks instead of 6); `-segment_time_delta` (we use 0.1) fixes it. Found
+  while building `tests/fixtures/make_fixtures.sh`.
+- length cap (spec A13): a file longer than 4 h or needing more than 8,000 chunks is
+  rejected before any upload (no raw object, no event); exactly 4 h / 8,000 chunks is
+  accepted. Camera sessions: at the cap the Producer publishes `VideoIngestCompleted` for
+  the current `video_id` and rolls over to a new `video_id` with media time restarting at 0;
+  no chunk of either video has `chunk_seq` ≥ 8000.
 - ordering: raw PUT before publish; `VideoIngestCompleted` only after the last PubAck;
   sha256 computed over the uploaded bytes; Msg-Ids deterministic, so retries dedupe.
 - failures: S3 PUT failure, NATS publish timeout and retry reuse the same `event_id` and
@@ -48,9 +66,24 @@ The acceptance module's `internal/contracts` builders must also be tested agains
 - input path handling: symlinks, paths outside an allowed root if run as a service.
 
 **Stream Worker (Rust)**
-- classification table: every error maps to permanent or transient and to an `ErrorClass`;
-  `num_delivered > 5` leads to the DLQ before processing; a failed DLQ publish NAKs and never
-  Terms.
+- DLQ rules (spec 2.2, A19, B1 "DLQ mechanism"; same table for the AI Worker): every
+  error maps to permanent or transient and to an `ErrorClass`; transient on attempts 1–4
+  → NAK with the backoff delay for that attempt; transient on attempt 5 → `DeadLetter`
+  `RETRIES_EXHAUSTED` with `delivery_count` 5 and `Term()` (no 5th NAK); received with
+  `num_delivered` ≥ 6 → `DeadLetter` on receipt, `delivery_count` = `num_delivered`, no
+  processing, `Term()`; permanent on any attempt → `DeadLetter` with its class and
+  `delivery_count` n; a failed DLQ publish → NAK, never `Term()`.
+- schema validation: `chunk_seq` 8000 (and above) or `chunk_count` 8001 → `DeadLetter`
+  `ERROR_CLASS_SCHEMA`, nothing written; 7999 / 8000 accepted.
+- `HlsIndex` size: an index with 8,000 segments (worst-case media times, all FAILED/READY
+  mixes, `expected_chunk_count` 8000, `finalize_reason`, `last_activity_at`) encodes to
+  ≤ 160 KB (review B1 budget ~152 KB); no `Segment.key` (field 2 reserved).
+- fault hooks (spec 2.5): `FP_TEST_FAULTS` unset/empty/`0` → header ignored unparsed; `1` →
+  honored; anything else → startup fails; order cap check → hook → processing;
+  `exit-on-receive` exits 70 before side effects; `crash-before-ack` exits 70 after PubAck
+  and only while `num_delivered` ≤ n (default 1); `fail-transient` follows the NAK/DLQ rules;
+  malformed value → DLQ `SCHEMA`/`TEST_FAULT_INVALID`; other consumer's value ignored;
+  `Fp-Test-Fault` never copied onto result events.
 - ffprobe/ffmpeg subprocess: hard timeout, kill on drop, stderr capture truncated to 4 KiB,
   no shell interpolation of keys.
 - HlsIndex CAS: concurrent updates (simulated revision conflicts), set semantics (a
@@ -103,8 +136,17 @@ The acceptance module's `internal/contracts` builders must also be tested agains
   `autoscaling.keda.sh/paused-replicas`, or KEDA would scale them back up.
 - Scenarios run serially (concurrency 1 is enforced): fault injection and global search
   results make parallel runs flaky.
-- Duration budget: the three idle-timeout scenarios wait ≥ 5.5 min each with the spec
-  default; see G6.
+- Duration budget: kind runs with `FINALIZE_IDLE_TIMEOUT=10s` and
+  `FINALIZE_SWEEP_INTERVAL=2s` (spec 2.2, A15), so the idle-timeout scenarios take ~15 s
+  each (`FP_FINALIZE_TIMEOUT` default 30 s). The long scenarios are now F4.2 (AI crash loop,
+  5 × (ack_wait 60 s + restart) ≈ 6 min), F4.1 (AI backoff 2+10+30+60 s ≈ 2 min plus Qdrant
+  scale down/up) and F4.3 (~4 min). Whole non-`@load` run ≈ 35 min; the Job allows 50 min
+  test time (`activeDeadlineSeconds` 3300).
+- Timing with the 10 s idle window: steps that need an unfinalized video must act within
+  10 s of its last `HLS_INDEX` update (F2.1, F2.3, F6.2 — index a single chunk of W and
+  search right after its `ChunkTranscriptIndexed`). F5.2a's redelivery comes after the 15 s
+  `ack_wait`, so V may already be idle-finalized; that scenario does not assert "not
+  finalized".
 
 ### 1.4 L5: load (`@load`)
 
@@ -130,18 +172,18 @@ AI AI Worker, E Embedder, API Serving API, N NATS, M MinIO, Q Qdrant, K kube.
 | 2.1 | Playlist before finalization | 02_finalization | 409, JSON, `Cache-Control: no-store`, `Retry-After: 5`; body counts and `null`; master same; unknown UUIDv7 gives 404 | SW API N |
 | 2.2 | VideoIngestCompleted finalizes | 02_finalization | playlist 5 segments VOD+ENDLIST; master one variant; finalized only after both objects exist; 200 proxied (no Location); variant resolves to API route | SW API N M |
 | 2.3 | Completion before last chunk | 02_finalization | no playlist after completion is recorded; 409 with expected 5; written once after chunk 4 READY; 200 | SW API N M |
-| 2.4 | Idle-timeout finalization | 02_finalization | reason IDLE_TIMEOUT; playlist 0,1,3 with DISCONTINUITY before 3; ENDLIST; 200 | SW API N M |
+| 2.4 | Idle-timeout finalization | 02_finalization | deployment env `FINALIZE_IDLE_TIMEOUT` = `10s`; no event for 10 s; reason IDLE_TIMEOUT; playlist 0,1,3 with DISCONTINUITY before 3; ENDLIST; 200 | SW API N M K |
 | 2.5 | No playable chunk | 02_finalization | finalized IDLE_TIMEOUT, no playlist objects; 410 `{"status":"failed"}` | SW API N M |
 | 2.6 | Late chunk | 02_finalization | playlist bytes and KV revision unchanged; segment still written; `fp_late_chunks_total` +1 (summed over replicas) | SW N M K |
 | 3.1 | Speech chunk indexed | 03_cold_path | stt_model `faster-whisper/small/int8`; language en; transcript key; passage prefix (vector compare); point UUIDv5 in alias→collection; payload thumbnail_key/language/start/end; event INDEXED with model + physical collection | AI E N M Q |
 | 3.2 | No speech / no audio | 03_cold_path | NO_SPEECH: no point; NO_AUDIO: no transcript, no point | AI N M Q |
 | 3.3 | @load cold-path latency | 03_cold_path | no backlog; p95 ≤ 5 s over 50 | AI N M Q |
-| 4.1 | AI failure retried then DLQ | 04_failures | Qdrant scaled to 0; growing NAK delays; DLQ RETRIES_EXHAUSTED; original subject/headers/payload verbatim; hot path unaffected | AI SW N Q K |
-| 4.2 | Crash loop broken | 04_failures | delivered > 5 leads to DLQ before processing, Term | AI N K (needs hook, G5) |
-| 4.3 | Redrive | 04_failures | republished with `{orig}:redrive:n`; each chunk indexed exactly once | fpctl AI N Q |
+| 4.1 | AI failure retried then DLQ | 04_failures | Qdrant scaled to 0; NAKs after deliveries 1–4 with growing delays; delivery 5 → DLQ RETRIES_EXHAUSTED, `delivery_count` 5; Term, no 6th delivery (ack floor passes); original subject/headers/payload verbatim; hot path unaffected | AI SW N Q K |
+| 4.2 | Crash loop broken | 04_failures | `Fp-Test-Fault: exit-on-receive; consumer=ai-indexer`; 5 container restarts (exit 70); 6th delivery DLQ'd on receipt, `delivery_count` 6, `original_headers` keep the fault header; After hook verifies the AI Worker rollout is healthy | AI N K (fault hook, spec 2.5) |
+| 4.3 | Redrive | 04_failures | dead letters via `fail-transient` hook; republished with `{orig}:redrive:n` and without `Fp-Test-Fault`; each chunk indexed exactly once | fpctl AI N Q |
 | 5.1 | Duplicate publish deduped | 05_idempotency | second PubAck duplicate; StoredCount(subject)=1 | N |
-| 5.2a | Redelivery, Stream Worker | 05_idempotency | same keys/equivalent bytes; KV chunk 5 once; one ChunkHlsReady | SW N M (needs hook, G5) |
-| 5.2b | Redelivery, AI Worker | 05_idempotency | same transcript key; one point; one ChunkTranscriptIndexed | AI N M Q (needs hook, G5) |
+| 5.2a | Redelivery, Stream Worker | 05_idempotency | `crash-before-ack; consumer=hls-stream-worker`; first ChunkHlsReady, snapshot; redelivery after ack_wait + restart, ack floor passes; same keys/equivalent bytes; KV chunk 5 once; one ChunkHlsReady; V may be idle-finalized meanwhile | SW N M K (fault hook) |
+| 5.2b | Redelivery, AI Worker | 05_idempotency | `crash-before-ack; consumer=ai-indexer`; same transcript key; one point; one ChunkTranscriptIndexed | AI N M Q K (fault hook) |
 | 6.1 | Merged ranges | 06_search | EmbedRequest QUERY unprefixed; result fields table; one merged range | API E Q N |
 | 6.2 | Processing videos shown | 06_search | W status processing; playback_url 409 then 200 | API Q N |
 | 6.3 | Thumbnail redirect | 06_search | 302, public endpoint, TTL ≤ 10 min | API M |
@@ -149,8 +191,11 @@ AI AI Worker, E Embedder, API Serving API, N NATS, M MinIO, Q Qdrant, K kube.
 | 6.5 | Legacy path | 06_search | `/api/search` JSON-equal to `/api/v1/search` | API |
 | 7.1 | Retention | 07_retention | 3 streams max_age 7 d; fp-raw expiry 10 d; fp-media none; 10 d > 7 d | N M |
 
-Harness status (2026-10-11): all 25 scenarios (149 steps, 120 definitions) defined and
-pending; `make -C tests acceptance-dry` passes; `GODOG_STRICT=true` fails on pending as intended.
+Harness status (2026-10-11, spec v3.1): all 25 scenarios (150 steps, 121 definitions)
+defined and pending; `make -C tests unit vet acceptance-dry` passes (also via
+`GO=tests/go-docker.sh`); `GODOG_STRICT=true` fails on pending as intended. The runner image
+builds (`make -C tests image`); fixtures are generated and verified with a pinned ffmpeg
+container (103/103 checks without the speech clip).
 
 ## 3. Spec gaps, contradictions and risks
 
@@ -159,12 +204,12 @@ written.
 
 | ID | Sev | Gap | Where | Proposal |
 |---|---|---|---|---|
-| G1 | High | Qdrant point-ID UUIDv5 **namespace is never defined**; Go/Rust/Python and the tests cannot agree on point IDs | B3 | Pin a namespace UUID in `contracts/testdata/keys.json` and B3. Tests use a placeholder + `FP_POINT_ID_NAMESPACE` |
-| G2 | High | `HLS_INDEX` value can exceed `max_value_size` 1 MiB (and default NATS `max_payload` 1 MiB) within the 24 h session limit (A13): 43,200 segments × ~85 B (key string ~61 B + seq + TimeRange + status) ≈ 3.7 MB; the 1 MiB limit is hit after ~12k chunks (~6.8 h). Each CAS also rewrites the whole value (O(n²) bytes per video) | B1 KV, A13 | Drop the derivable `Segment.key`, store media_time as duration, and/or shard the index (`{id}.{rendition}.{block}`); or cap sessions at ~6 h. Add a unit test rendering a 43,200-segment index |
-| G3 | Med | DLQ delivery cap is inconsistent: Feature 4 says "after the 5th delivery publishes a DeadLetter"; B1 step 1 says on receipt when `num_delivered > 5` (the 6th delivery); B1 step 3 says "on the 5th attempt, step 1" | spec F4, B1 | Pick one: "a transient failure on delivery 5 dead-letters immediately; a receipt with num_delivered > 5 dead-letters before processing". Assert `delivery_count` exactly |
-| G4 | Med | Per-video subject filter: `video.chunks.*.{id}` (as one might write it) only matches `uploaded`, because `hls.ready`/`ai.indexed` have 5 tokens | B1 subjects | Document that per-video filters need `video.chunks.*.{id}` + `video.chunks.*.*.{id}`, or flatten to `video.chunks.hls_ready.{id}`. Harness uses both filters (`contracts.EventFilterSubjects`, tested) |
-| G5 | High (testability) | "Crash before ack" (F4.2) and "fully processed but not acked" (F5.2) can't be produced black-box without races | F4, F5 | Add test-only fault hooks enabled only by `values-kind.yaml`, e.g. `FP_TEST_FAULTS=crash_before_ack:source_id=…`/`skip_ack:…`, keyed on `VideoChunkUploaded.source_id`. Must be compiled out or rejected in prod values |
-| G6 | Med | Idle-timeout scenarios hard-code `FINALIZE_IDLE_TIMEOUT "5m"`; 3 scenarios cost ≥ 17 min per PR run | F2 | values-kind sets e.g. `30s` (sweep `5s`); make the step "runs with the configured FINALIZE_IDLE_TIMEOUT" and assert relative to it |
+| G1 | Resolved | Point-ID namespace was undefined | B3 | **Resolved**: `c1907ffe-0c06-4077-8866-08fb8d658b77`, fixed forever (spec 2.2, A18, decision 15). Harness constant + B3 golden tests; `FP_POINT_ID_NAMESPACE` removed |
+| G2 | Resolved | `HLS_INDEX` could exceed 1 MiB within the former 24 h session limit | B1 KV, A13 | **Resolved**: 4 h / 8,000-chunk cap, `Segment.key` dropped (field 2 reserved), value ≤ ~152 KB (spec A13, decision 14). Harness: `contracts.ValidateChunkSeq/Count`, `payload.HlsIndex.CheckCap`, `payload.CheckEncodedSize` (160 KB); L2 cases above |
+| G3 | Resolved | DLQ delivery cap was inconsistent (5th vs 6th delivery) | spec F4, B1 | **Resolved**: at most 5 attempts; transient on attempt 5 → DLQ `delivery_count` 5; `num_delivered` ≥ 6 → DLQ on receipt (spec 2.2, A19, decision 16). F4.1/F4.2 assert exact counts |
+| G4 | Resolved | Per-video subject filters | B1 subjects | **Resolved**: four documented filters (spec 4, B1 "Per-video filters", decision 19); harness pinned by `TestFilterSubjectsAreTheFourDocumented` |
+| G5 | Resolved | Crash-before-ack / not-acked states were not producible | F4, F5 | **Resolved**: test-only fault hooks, header `Fp-Test-Fault`, enabled only by `FP_TEST_FAULTS=1` from `values-kind.yaml` (spec 2.5, A20, decision 17). Remaining risk: hooks ship in the production binary and NATS has no auth (A9), so the CI check that prod manifests never contain `FP_TEST_FAULTS` is the only control; add an alert on `fp_test_faults_enabled` |
+| G6 | Resolved | Idle-timeout scenarios took ≥ 17 min | F2 | **Resolved**: kind `FINALIZE_IDLE_TIMEOUT=10s`, sweep `2s`; production 5 m/30 s (spec 2.2, A15, decision 18). New risk: 10 s is shorter than the hot-path retry span (~25 s), see the timing note in 1.3 |
 | G7 | Med | EXTINF precision/rounding undefined ("equal to the measured duration") | F1, 2.2 | Define: milliseconds, 3 decimals, `%.3f` of `(end_ms-start_ms)/1000`; TARGETDURATION = ceil of that value |
 | G8 | Med | p99 publish-to-delivery is not observable outside the worker; histogram bucket granularity limits p99 accuracy | F1 @load, A4 | Define the `fp_consume_latency_seconds` buckets (incl. 0.25/0.5/0.75 s) and that the load test reads the histogram delta |
 | G9 | Med | Producer handling of H.264 **without audio** (common for cameras) is undefined; A12 says H.264+AAC required, but NO_AUDIO exists as a cold-path outcome | A12, F3 | Decide: accept video-only (NO_AUDIO path) or reject. Fixture `sample_h264_noaudio.mp4` is ready |
@@ -210,8 +255,9 @@ scenarios (plan only; the feature files stay verbatim) and matching API unit tab
 6. **Response safety**: transcript text in `snippet` is JSON-escaped; UI must render it as
    text (XSS via spoken/odd transcript text); error bodies never echo raw input unescaped.
 7. **Resource limits**: API request timeouts with Qdrant/embedder down (no goroutine/conn
-   leak; 503 within N s); playlist proxy body size bounded; Producer rejects files above a
-   size/duration limit (24 h, A13).
+   leak; 503 within N s); playlist proxy body size bounded; Producer rejects files longer
+   than 4 h or above 8,000 chunks before any upload (A13); workers dead-letter
+   `chunk_seq` ≥ 8000 as SCHEMA, so a forged event cannot grow an index past the budget.
 8. **Secrets**: no credentials in logs/events/DLQ `error_message` (MinIO keys, presigned
    signatures); `DeadLetter.original_headers` must not carry auth headers.
 9. **Event payload trust**: workers must not trust `ObjectRef.bucket/key` from events
@@ -220,6 +266,13 @@ scenarios (plan only; the feature files stay verbatim) and matching API unit tab
    the SSRF-style risk: events must never carry endpoints/URLs (ObjectRef design note).
 10. **Bucket exposure**: anonymous GET on MinIO buckets is denied (MinIO private);
     `fp-raw` not presignable via the API.
+11. **Test fault hooks in production** (spec 2.5): `helm template -f values-prod.yaml` output
+    contains no `FP_TEST_FAULTS` (CI step 7); a worker started with `FP_TEST_FAULTS=true`
+    or `yes` refuses to start; with hooks disabled, publishing
+    `Fp-Test-Fault: exit-on-receive; consumer=ai-indexer` to a production-like deployment
+    is processed normally (no exit, no restart). Since NATS has no auth (A9), anyone who can
+    publish could crash-loop a worker if the env gate ever leaked; alert on
+    `fp_test_faults_enabled == 1`.
 
 ## 5. Proposed extra scenarios (not in feature files)
 
@@ -244,8 +297,10 @@ scenarios (plan only; the feature files stay verbatim) and matching API unit tab
   with finalized=true; identical playlist bytes.
 - Search with Japanese/Chinese query returns results (multilingual model smoke test).
 - Search result for a `failed` video: status `failed`, playback_url gives 410.
-- Very long video: Producer on a multi-hour synthetic input (load lane) checks `HLS_INDEX`
-  size against G2.
+- Long video at the cap: Producer on a synthetic 4 h input (load lane, lavfi source, small
+  resolution) yields exactly 7,200 chunks and an `HLS_INDEX` value ≤ 160 KB
+  (`payload.CheckEncodedSize`); a 4 h + 2 s input is rejected before any upload; an event
+  with `chunk_seq` 8000 published directly is dead-lettered as SCHEMA by both consumers.
 - Retention: `deny_delete` on VIDEO_EVENTS/VIDEO_DLQ, `discard: new` on VIDEO_DLQ,
   duplicate windows, consumer configs (ack_wait, max_deliver 10, max_ack_pending) match
   `contracts/nats/*.json`.
@@ -258,5 +313,12 @@ scenarios (plan only; the feature files stay verbatim) and matching API unit tab
   runner image (TODO stages in the Dockerfile).
 - Helm chart service/secret names; then update `tests/kind/acceptance-job.yaml`,
   `port-forward.sh` and the `FP_WORKLOAD_*` defaults.
-- Test-only fault hooks (G5) gated to `values-kind.yaml`.
+- `values-kind.yaml` must set `FINALIZE_IDLE_TIMEOUT=10s`, `FINALIZE_SWEEP_INTERVAL=2s` and
+  `testFaults.enabled: true` (spec 2.2, 2.5); the acceptance steps check the first and
+  `FP_TEST_FAULTS=1` on the deployments and fail fast otherwise.
+- Producer: use `-segment_time_delta` (see 1.2 segmenting) and verify chunk count against
+  duration.
+- Stream Worker: ffprobe alone accepts a truncated chunk (`chunk_truncated.ts`: ffprobe
+  exit 0, h264+aac reported); only the `-c copy` remux fails. INVALID_MEDIA classification
+  must cover remux failures, not just the ffprobe exit code.
 - Speech fixture recording (tests/fixtures/README.md).

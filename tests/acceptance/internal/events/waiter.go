@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
+	"time"
 
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
@@ -86,11 +88,97 @@ func cloneHeader(h nats.Header) nats.Header {
 
 // Publish sends a test event with the contract headers and waits for the PubAck.
 func Publish(ctx context.Context, js jetstream.JetStream, subject, msgID, schema string, data []byte) (*jetstream.PubAck, error) {
+	return PublishWithHeaders(ctx, js, subject, msgID, schema, data, nil)
+}
+
+// PublishWithFault publishes like Publish and adds one Fp-Test-Fault header (spec 2.5),
+// e.g. contracts.TestFaultValue(contracts.FaultExitOnReceive, contracts.ConsumerAI, 0).
+// The value is validated with the same grammar the workers apply.
+func PublishWithFault(ctx context.Context, js jetstream.JetStream, subject, msgID, schema string, data []byte, faultValue string) (*jetstream.PubAck, error) {
+	if _, err := contracts.ParseTestFaultValue(faultValue); err != nil {
+		return nil, err
+	}
+	return PublishWithHeaders(ctx, js, subject, msgID, schema, data, nats.Header{contracts.HeaderTestFault: {faultValue}})
+}
+
+// contractHeaders are set by PublishWithHeaders itself and cannot be overridden by extra.
+var contractHeaders = map[string]bool{
+	contracts.HeaderMsgID: true, contracts.HeaderContentType: true,
+	contracts.HeaderSchema: true, contracts.HeaderProducer: true,
+}
+
+// PublishWithHeaders publishes with the contract headers plus extra headers (for example
+// Fp-Test-Fault). Extra headers may not replace contract headers.
+func PublishWithHeaders(ctx context.Context, js jetstream.JetStream, subject, msgID, schema string, data []byte, extra nats.Header) (*jetstream.PubAck, error) {
 	msg := &nats.Msg{Subject: subject, Data: data, Header: nats.Header{}}
+	for k, vs := range extra {
+		if contractHeaders[http.CanonicalHeaderKey(k)] || contractHeaders[k] {
+			return nil, fmt.Errorf("extra header %q would override a contract header", k)
+		}
+		for _, v := range vs {
+			msg.Header.Add(k, v)
+		}
+	}
 	msg.Header.Set(contracts.HeaderContentType, contracts.ContentTypeProto)
 	msg.Header.Set(contracts.HeaderSchema, schema)
 	msg.Header.Set(contracts.HeaderProducer, "acceptance-tests/dev")
 	return js.PublishMsg(ctx, msg, jetstream.WithMsgID(msgID))
+}
+
+// ConsumerState is the part of a durable consumer's info the redelivery and DLQ steps use.
+type ConsumerState struct {
+	AckFloorStream  uint64 // every stream seq <= this is acked or terminated
+	DeliveredStream uint64 // highest stream seq delivered so far
+	DeliveredTotal  uint64 // deliveries including redeliveries (consumer sequence)
+	NumAckPending   int
+	NumRedelivered  int
+	NumPending      uint64
+}
+
+// ConsumerSnapshot reads a durable consumer's state (e.g. "ai-indexer" on VIDEO_EVENTS).
+func ConsumerSnapshot(ctx context.Context, js jetstream.JetStream, stream, durable string) (ConsumerState, error) {
+	c, err := js.Consumer(ctx, stream, durable)
+	if err != nil {
+		return ConsumerState{}, fmt.Errorf("consumer %s/%s: %w", stream, durable, err)
+	}
+	info, err := c.Info(ctx)
+	if err != nil {
+		return ConsumerState{}, fmt.Errorf("consumer %s/%s info: %w", stream, durable, err)
+	}
+	return ConsumerState{
+		AckFloorStream:  info.AckFloor.Stream,
+		DeliveredStream: info.Delivered.Stream,
+		DeliveredTotal:  info.Delivered.Consumer,
+		NumAckPending:   info.NumAckPending,
+		NumRedelivered:  info.NumRedelivered,
+		NumPending:      info.NumPending,
+	}, nil
+}
+
+// WaitAckFloor blocks until the durable consumer's ack floor reaches streamSeq, i.e. the
+// message was finally acked or terminated by the worker (Feature 5 redelivery, Feature 4
+// Term). Consumer info has no watch API, so this polls every poll interval (not a fixed
+// sleep: it returns as soon as the condition holds, bounded by ctx).
+func WaitAckFloor(ctx context.Context, js jetstream.JetStream, stream, durable string, streamSeq uint64, poll time.Duration) (ConsumerState, error) {
+	if poll <= 0 {
+		poll = 250 * time.Millisecond
+	}
+	t := time.NewTicker(poll)
+	defer t.Stop()
+	for {
+		st, err := ConsumerSnapshot(ctx, js, stream, durable)
+		if err == nil && st.AckFloorStream >= streamSeq {
+			return st, nil
+		}
+		select {
+		case <-ctx.Done():
+			if err != nil {
+				return st, fmt.Errorf("ack floor of %s/%s never reached %d: %w (last error: %v)", stream, durable, streamSeq, ctx.Err(), err)
+			}
+			return st, fmt.Errorf("ack floor of %s/%s is %d, never reached %d: %w", stream, durable, st.AckFloorStream, streamSeq, ctx.Err())
+		case <-t.C:
+		}
+	}
 }
 
 // StoredCount returns how many messages the stream currently stores on exactly subject.

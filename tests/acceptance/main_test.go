@@ -102,9 +102,6 @@ func TestFeatures(t *testing.T) {
 		t.Fatalf("configuration: %v", err)
 	}
 	t.Logf("config: %s", cfg)
-	if cfg.PointIDNamespaceIsPlaceholder() {
-		t.Log("WARNING: Qdrant point-ID namespace is the TODO placeholder; set FP_POINT_ID_NAMESPACE once contracts define it")
-	}
 
 	inj, err := fault.NewInjector(fault.ExecRunner{Kubectl: cfg.Kubectl, KubeContext: cfg.KubeContext}, cfg.KubeNamespace, cfg.RolloutTimeout)
 	if err != nil {

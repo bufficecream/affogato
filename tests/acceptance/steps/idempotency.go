@@ -8,6 +8,14 @@ import (
 
 const fIdem = "F5 idempotency"
 
+// workerConsumer maps the worker names used in Feature 5 to their durable consumers.
+func workerConsumer(worker string) string {
+	if worker == "AI Worker" {
+		return contracts.ConsumerAI
+	}
+	return contracts.ConsumerHls
+}
+
 // Feature 5: Idempotent processing.
 func registerIdempotency(r Registrar) {
 	r.Step(`^the Producer publishes "VideoChunkUploaded" for chunk (\d+) of video "([^"]+)" twice with the same Nats-Msg-Id$`,
@@ -34,19 +42,41 @@ func registerIdempotency(r Registrar) {
 	// ---- Scenario Outline: redelivery after crash before ack ----
 	r.Step(`^chunk (\d+) of video "([^"]+)" has been fully processed by (Stream Worker|AI Worker) but not acked$`,
 		func(ctx context.Context, chunk int, alias, worker string) error {
+			seq, err := seqArg(chunk)
+			if err != nil {
+				return err
+			}
 			vid, err := videoArg(ctx, alias)
 			if err != nil {
 				return err
 			}
-			// TODO: spec gap - "processed but not acked" needs a hook (e.g. env
-			// FP_TEST_SKIP_ACK_FOR_SOURCE_ID in values-kind.yaml) or killing the pod between
-			// PubAck and ack, which is racy. Snapshot outputs (object bytes, KV, point) here.
-			return pending(fIdem, "%s processed chunk %d of %s without ack", worker, chunk, vid)
+			consumer := workerConsumer(worker)
+			fv, err := contracts.TestFaultValue(contracts.FaultCrashBeforeAck, consumer, 0)
+			if err != nil {
+				return err
+			}
+			// TODO (spec 2.5 fault hook; default n = 1, so delivery 2 is processed and acked):
+			//  1. require FP_TEST_FAULTS=1 on the worker (inj.DeploymentEnv) and register
+			//     inj.VerifyHealthyOnRestore(worker) + PodRestarts snapshot;
+			//  2. upload the chunk, PublishWithFault(uploaded:V:seq6, fv) and keep the PubAck
+			//     stream seq;
+			//  3. wait for the first result event (hls-ready:V:src:seq6 or ai-indexed:V:seq6):
+			//     it is published before the crash;
+			//  4. snapshot outputs: segment + thumbnail bytes and HLS_INDEX revision (hot), or
+			//     transcript JSON and the Qdrant point (cold).
+			// Stream Worker in kind: the redelivery comes after ack_wait (15 s) + restart, so
+			// with FINALIZE_IDLE_TIMEOUT=10s V may be idle-finalized first and the redelivered
+			// chunk counts as late. Do not assert V is unfinalized; the steps below hold either way.
+			return pending(fIdem, "%s processed %s of %s, crashed before ack (%s: %q)", worker,
+				contracts.MsgIDUploaded(vid, seq), vid, contracts.HeaderTestFault, fv)
 		})
 	r.Step(`^the event is redelivered to (Stream Worker|AI Worker)$`,
 		func(ctx context.Context, worker string) error {
-			// TODO: wait until consumer redelivers (ack_wait 15 s / 60 s) and the worker acks.
-			return pending(fIdem, "redelivery to %s observed", worker)
+			// TODO: wait ack_wait (15 s hot / 60 s AI) + container restart: PodRestarts grows by
+			// exactly 1 with exit code 70; then events.WaitAckFloor(VIDEO_EVENTS,
+			// workerConsumer(worker), stream seq of the upload) until the floor passes the message (delivery 2
+			// processed and acked). Bound: ack_wait + RolloutTimeout.
+			return pending(fIdem, "redelivery to %s (%s) observed and acked", worker, workerConsumer(worker))
 		})
 	r.Step(`^the same object keys are overwritten with equivalent content$`,
 		func(ctx context.Context) error {

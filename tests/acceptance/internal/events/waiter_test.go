@@ -163,3 +163,86 @@ func TestWatchRejectsInvalidVideoID(t *testing.T) {
 		t.Fatal("wildcard-bearing video_id accepted as filter")
 	}
 }
+
+func TestPublishWithFaultCarriesHeader(t *testing.T) {
+	js := startJetStream(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	v, _ := contracts.NewVideoID()
+	w, err := Watch(ctx, js, v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer w.Stop()
+	fv, err := contracts.TestFaultValue(contracts.FaultExitOnReceive, contracts.ConsumerAI, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishWithFault(ctx, js, contracts.SubjectChunkUploaded(v), contracts.MsgIDUploaded(v, 7), contracts.SchemaVideoChunkUploaded, []byte("p"), fv); err != nil {
+		t.Fatal(err)
+	}
+	ev, err := w.WaitFor(ctx, WithMsgID(contracts.MsgIDUploaded(v, 7)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := ev.Header.Get(contracts.HeaderTestFault); got != "exit-on-receive; consumer=ai-indexer" {
+		t.Errorf("Fp-Test-Fault = %q", got)
+	}
+	if ev.Schema() != contracts.SchemaVideoChunkUploaded {
+		t.Errorf("Fp-Schema = %q", ev.Schema())
+	}
+
+	if _, err := PublishWithFault(ctx, js, contracts.SubjectChunkUploaded(v), contracts.MsgIDUploaded(v, 8), contracts.SchemaVideoChunkUploaded, nil, "exit-on-receive"); err == nil {
+		t.Error("malformed fault value (no consumer) published")
+	}
+	if _, err := PublishWithHeaders(ctx, js, contracts.SubjectChunkUploaded(v), contracts.MsgIDUploaded(v, 9), contracts.SchemaVideoChunkUploaded, nil,
+		nats.Header{"Nats-Msg-Id": {"forged"}}); err == nil {
+		t.Error("extra header replaced Nats-Msg-Id")
+	}
+}
+
+func TestWaitAckFloor(t *testing.T) {
+	js := startJetStream(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cons, err := js.CreateOrUpdateConsumer(ctx, contracts.StreamEvents, jetstream.ConsumerConfig{
+		Durable: contracts.ConsumerAI, FilterSubject: "video.chunks.uploaded.*", AckPolicy: jetstream.AckExplicitPolicy,
+		AckWait: 30 * time.Second,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, _ := contracts.NewVideoID()
+	ack := mustPublish(t, js, contracts.SubjectChunkUploaded(v), contracts.MsgIDUploaded(v, 5), contracts.SchemaVideoChunkUploaded)
+
+	// Delivered but not acked: the floor must not pass the message.
+	batch, err := cons.Fetch(1, jetstream.FetchMaxWait(2*time.Second))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var msg jetstream.Msg
+	for m := range batch.Messages() {
+		msg = m
+	}
+	if msg == nil {
+		t.Fatal("no message fetched")
+	}
+	short, cancel2 := context.WithTimeout(ctx, 300*time.Millisecond)
+	defer cancel2()
+	if _, err := WaitAckFloor(short, js, contracts.StreamEvents, contracts.ConsumerAI, ack.Sequence, 50*time.Millisecond); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("unacked message: want timeout, got %v", err)
+	}
+	st, err := ConsumerSnapshot(ctx, js, contracts.StreamEvents, contracts.ConsumerAI)
+	if err != nil || st.NumAckPending != 1 || st.DeliveredStream != ack.Sequence {
+		t.Fatalf("snapshot before ack = %+v, %v", st, err)
+	}
+
+	// Term (as the DLQ path does) advances the floor like an ack.
+	if err := msg.Term(); err != nil {
+		t.Fatal(err)
+	}
+	st, err = WaitAckFloor(ctx, js, contracts.StreamEvents, contracts.ConsumerAI, ack.Sequence, 50*time.Millisecond)
+	if err != nil || st.AckFloorStream < ack.Sequence || st.NumAckPending != 0 {
+		t.Fatalf("after Term: %+v, %v", st, err)
+	}
+}

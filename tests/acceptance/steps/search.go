@@ -104,8 +104,11 @@ func registerSearch(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO: index speech chunks of W without VideoIngestCompleted; the idle timeout
-			// (5 min) bounds how long W stays "processing" - scenario must finish before it.
+			// TODO: index a single speech chunk of W (no VideoIngestCompleted) and run the
+			// search immediately after its ChunkTranscriptIndexed arrives. With the kind idle
+			// timeout (10 s) W is force-finalized ~10 s after its last HLS_INDEX update, so
+			// "processing" and the 409 on playback_url must be observed inside that window.
+			// Then publish VideoIngestCompleted(chunk_count 1) and expect 200.
 			return pending(fSearch, "index %s without finalizing", vid)
 		})
 	r.Step(`^the result for video "([^"]+)" is included with status "([^"]+)"$`,

@@ -12,7 +12,10 @@ package payload
 
 import (
 	"errors"
+	"fmt"
 	"time"
+
+	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
 )
 
 // ErrNotImplemented is returned by PendingCodec. Steps map it to godog.ErrPending.
@@ -106,12 +109,19 @@ const (
 	SegmentFailed
 )
 
+// Segment mirrors framepulse.state.v1.Segment. There is no key field: Segment.key was
+// dropped (field 2 reserved, review decision 14); the segment key is derived from
+// chunk_seq with contracts.HlsSegment.
 type Segment struct {
 	ChunkSeq  uint32
-	Key       string
 	MediaTime TimeRange
 	Status    SegmentStatus
 }
+
+// MaxHlsIndexBytes is the encoded-size budget the acceptance run checks HLS_INDEX values
+// against: review B1 bounds an 8,000-segment index at ~152 KB (+ header fields); 160 KB
+// leaves a little slack while staying far below the 1 MiB max_value_size.
+const MaxHlsIndexBytes = 160_000
 
 type HlsIndex struct {
 	VideoID            string
@@ -175,6 +185,33 @@ func (PendingCodec) DecodeTranscriptJSON([]byte) (Transcript, error) {
 var Default Codec = PendingCodec{}
 
 // ---- Pure helpers over views (unit-tested; no codec needed) ----
+
+// CheckCap verifies the per-video cap (spec A13): at most 8,000 segments, every chunk_seq
+// below 8,000 and expected_chunk_count (if known) at most 8,000.
+func (x HlsIndex) CheckCap() error {
+	if len(x.Segments) > contracts.MaxVideoChunks {
+		return fmt.Errorf("HlsIndex %s.%s has %d segments, cap %d", x.VideoID, x.Rendition, len(x.Segments), contracts.MaxVideoChunks)
+	}
+	for _, s := range x.Segments {
+		if err := contracts.ValidateChunkSeq(int64(s.ChunkSeq)); err != nil {
+			return fmt.Errorf("HlsIndex %s.%s: %w", x.VideoID, x.Rendition, err)
+		}
+	}
+	if x.ExpectedChunkCount != 0 {
+		if err := contracts.ValidateChunkCount(int64(x.ExpectedChunkCount)); err != nil {
+			return fmt.Errorf("HlsIndex %s.%s: %w", x.VideoID, x.Rendition, err)
+		}
+	}
+	return nil
+}
+
+// CheckEncodedSize checks a raw HLS_INDEX value against MaxHlsIndexBytes.
+func CheckEncodedSize(value []byte) error {
+	if len(value) > MaxHlsIndexBytes {
+		return fmt.Errorf("HLS_INDEX value is %d bytes, budget %d (review B1 KV size budget)", len(value), MaxHlsIndexBytes)
+	}
+	return nil
+}
 
 // SegmentsInOrder reports whether segments are sorted by chunk_seq with no duplicates.
 func (x HlsIndex) SegmentsInOrder() bool {

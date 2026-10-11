@@ -3,18 +3,35 @@
 Media fixtures are generated, not committed. Run:
 
 ```sh
-tests/fixtures/make_fixtures.sh            # writes tests/fixtures/media/ (git-ignored)
+make -C tests fixtures                     # writes tests/fixtures/media/ (git-ignored)
+make -C tests fixtures-verify              # re-check existing fixtures only
 ```
 
-`make_fixtures.sh` needs `ffmpeg` and `ffprobe` with `libx264`. It generates the
-speech-free fixtures, checks the properties the scenarios rely on (codecs, keyframe-aligned
-chunks, ffprobe rejecting the corrupted chunk) and writes `media/SHA256SUMS`. The runner
-image (`tests/acceptance/Dockerfile`) runs the same script in its build stage, so the
-in-cluster Job always has the fixtures.
+`make_fixtures.sh` uses a host `ffmpeg`/`ffprobe` with `libx264` if there is one;
+otherwise it re-runs itself inside the pinned image
+`linuxserver/ffmpeg:version-7.1.1-cli@sha256:aea59a11…` through `tests/ffmpeg-docker.sh`
+(Docker only). `FIXTURES_DOCKER=1` forces the container; `FFMPEG=$PWD/tests/ffmpeg-docker.sh`
+runs one container per ffmpeg call instead. The output is bit-reproducible with the
+pinned image (same `SHA256SUMS` on every run and inside the runner image).
+
+After generating, `verify_fixtures.sh` checks every file with ffprobe (103 checks without
+the speech set): container, codecs, H.264 profile, size, pixel format, frame/sample rate,
+durations, key frames exactly every 2 s, 6 contiguous one-GOP chunks with 60 video packets
+each, the tone is audible, the silent chunk is digital silence (≤ -90 dB), the no-audio
+files have no audio stream, the MPEG-4 sample is not H.264, ffprobe rejects the corrupted
+and empty chunks, and `SHA256SUMS` covers exactly the files present. Any failure fails
+`make fixtures` and the runner image build.
+
+Known behaviour the verifier pins down (reported to the developer):
+- `chunk_truncated.ts` (first 2000 bytes of a valid chunk) **passes ffprobe** (exit 0,
+  h264 + aac); only the stream-copy remux fails. Probe-only validation is not enough.
+- Cutting with plain `-segment_time 2` misses the first 2 s boundary on inputs with
+  B-frames (chunk 0 ≈ 4 s). The script adds `-segment_time_delta 0.1`; the Producer needs
+  the same.
 
 | File | Used by |
 |---|---|
-| `sample_1080p.mp4` (H.264 High + AAC, 10 s, 1 kHz tone) | Feature 1 valid video |
+| `sample_1080p.mp4` (H.264 High + AAC, 10 s, 1 kHz tone, faststart) | Feature 1 valid video |
 | `sample_short.mp4`, `sample_12s.mp4`, `chunks/six/*.ts` | out-of-order, corrupted-chunk, finalization scenarios |
 | `chunk_corrupted.ts` | Feature 1 corrupted chunk, Feature 2 "no playable chunk" |
 | `chunk_silent_audio.ts`, `chunk_no_audio.ts` | Feature 3 NO_SPEECH / NO_AUDIO |
@@ -31,7 +48,8 @@ ffmpeg alone, so provide a recording and place it at:
 tests/fixtures/speech/data_pipelines_en.wav     (or .m4a / .aiff / .mp3)
 ```
 
-or point `SPEECH_SRC=/path/to/file` at it. Requirements:
+or point `SPEECH_SRC=/path/to/file` at it (paths outside the repository work with the
+container too: the script mounts the file's directory). Requirements:
 
 - Clear English speech, mono or stereo, at least 16 s long, so that chunks 0..7 carry speech
   (Feature 6 merges 8 adjacent chunks).

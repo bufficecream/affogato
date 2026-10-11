@@ -18,6 +18,10 @@ func registerFinalization(r Registrar) {
 				return err
 			}
 			// TODO: upload + publish chunks a and b (no completion); WatchKey until both READY.
+			// Timing (kind FINALIZE_IDLE_TIMEOUT=10s): the When/Then GETs must run within 10 s
+			// of the last HLS_INDEX update or the sweeper finalizes V (410/200 instead of 409).
+			// Record the KV entry's Created time here; the 409 steps fail with a clear
+			// "idle window exceeded" message if more than ~8 s passed.
 			return pending(fFin, "make chunks %d,%d of %s READY without completion", a, b, vid)
 		})
 	r.Step(`^the client sends GET "([^"]+)"$`,
@@ -150,9 +154,12 @@ func registerFinalization(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO: holding chunk 4 "in processing" deterministically is not possible from
-			// outside. Practical approach: publish VideoChunkUploaded for chunk 4 only after the
-			// completion step (or delay its raw upload). Spec gap - see test plan.
+			// TODO: hold chunk 4 back by publishing its VideoChunkUploaded only in "chunk 4
+			// becomes READY". Timing (kind idle 10s): completion, the 409 check and chunk 4's
+			// publish must all happen within 10 s of the previous HLS_INDEX update, otherwise
+			// the sweeper force-finalizes with IDLE_TIMEOUT and "written once" fails for the
+			// wrong reason. Each step re-arms the window (completion and READY stamp
+			// last_activity_at), so keep the gap between consecutive steps < ~8 s.
 			return pending(fFin, "chunks %d..%d of %s READY, chunk %d held back", from, to, vid, inFlight)
 		})
 	r.Step(`^no static playlist is written yet$`,
@@ -201,9 +208,10 @@ func registerFinalization(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO: read the deployment env (kubectl get deploy -o jsonpath) and require it
-			// equals d. Spec gap: 5 m makes this scenario take >5 min; values-kind.yaml should
-			// allow a shorter timeout and this step should read the configured value.
+			// TODO: inj.DeploymentEnv(ParseWorkload(Cfg.WorkloadStreamWorker),
+			// "FINALIZE_IDLE_TIMEOUT") must parse to d (kind values: "10s"; spec 2.2). Also read
+			// FINALIZE_SWEEP_INTERVAL and require Cfg.FinalizeTimeout > d + sweep, so a cluster
+			// deployed with production values (5m) fails here instead of timing out later.
 			return pending(fFin, "stream worker FINALIZE_IDLE_TIMEOUT == %s", d)
 		})
 	r.Step(`^chunks (\d+(?:, \d+)* and \d+) of video "([^"]+)" are READY and no "VideoIngestCompleted" has been published$`,
@@ -219,15 +227,20 @@ func registerFinalization(r Registrar) {
 			// TODO: upload + publish only these chunks; WatchKey until each READY.
 			return pending(fFin, "chunks %v of %s READY, no completion", seqs, vid)
 		})
-	r.Step(`^no event for video "([^"]+)" arrives for (\d+) minutes$`,
-		func(ctx context.Context, alias string, minutes int) error {
+	r.Step(`^no event for video "([^"]+)" arrives for (\d+) seconds$`,
+		func(ctx context.Context, alias string, seconds int) error {
 			vid, err := videoArg(ctx, alias)
 			if err != nil {
 				return err
 			}
-			// TODO: do nothing; the next Then waits (FinalizeTimeout) on HLS_INDEX finalized.
-			// Assert afterwards that the waiter saw no new event for vid in that window.
-			return pending(fFin, "idle %d min for %s (no publish)", minutes, vid)
+			if seconds <= 0 {
+				return errInvalid("idle window must be positive")
+			}
+			// TODO: publish nothing; the next Then waits (Cfg.FinalizeTimeout, default 30 s)
+			// on HLS_INDEX finalized. Afterwards assert the waiter saw no event for vid between
+			// the last READY and finalization, and that finalization happened no earlier than
+			// last_activity_at + seconds (and no later than + seconds + sweep + margin).
+			return pending(fFin, "idle %d s for %s (no publish)", seconds, vid)
 		})
 	r.Step(`^the video is finalized with finalize_reason (COMPLETED|IDLE_TIMEOUT)$`,
 		func(ctx context.Context, reason string) error {

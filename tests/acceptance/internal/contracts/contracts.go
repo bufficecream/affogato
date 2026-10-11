@@ -14,6 +14,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -48,6 +49,12 @@ const (
 	HeaderSchema      = "Fp-Schema"
 	HeaderProducer    = "Fp-Producer"
 	ContentTypeProto  = "application/protobuf"
+
+	// HeaderTestFault requests a test-only fault in a worker (spec 2.5, review B1
+	// "Test-only fault hooks"). Honored only when the worker runs with FP_TEST_FAULTS=1
+	// (kind). Workers never copy it onto result events; DeadLetter.original_headers keeps
+	// it verbatim; fpctl dlq redrive strips it.
+	HeaderTestFault = "Fp-Test-Fault"
 )
 
 // Fully qualified protobuf message names, used in the Fp-Schema header.
@@ -59,9 +66,35 @@ const (
 	SchemaDeadLetter             = "framepulse.dlq.v1.DeadLetter"
 )
 
-// MaxChunkSeq is the largest chunk_seq representable by the 6-digit seq6 format.
-// At ~2 s per chunk this is ~23 days, well above the 24 h session limit (spec A13).
+// MaxChunkSeq is the largest chunk_seq representable by the 6-digit seq6 format. Key
+// builders reject anything above it (B2). It is a format limit, not the video cap:
+// see MaxVideoChunks.
 const MaxChunkSeq = 999_999
+
+// Video length cap (spec A13, review decision 14): at most 4 h of media and at most
+// 8,000 chunks (chunk_seq 0..7999). Workers dead-letter chunk_seq >= 8000 or
+// chunk_count > 8000 as ERROR_CLASS_SCHEMA; the Producer rejects longer files before
+// any upload.
+const (
+	MaxVideoChunks   = 8_000
+	MaxVideoDuration = 4 * time.Hour
+)
+
+// ValidateChunkSeq reports whether seq is inside the per-video cap (0..7999).
+func ValidateChunkSeq(seq int64) error {
+	if seq < 0 || seq >= MaxVideoChunks {
+		return fmt.Errorf("chunk_seq %d outside 0..%d (spec A13: at most %d chunks per video)", seq, MaxVideoChunks-1, MaxVideoChunks)
+	}
+	return nil
+}
+
+// ValidateChunkCount reports whether a VideoIngestCompleted.chunk_count is valid (1..8000).
+func ValidateChunkCount(n int64) error {
+	if n < 1 || n > MaxVideoChunks {
+		return fmt.Errorf("chunk_count %d outside 1..%d (spec A13)", n, MaxVideoChunks)
+	}
+	return nil
+}
 
 // Seq6 formats a 0-based chunk_seq as the zero-padded 6-digit form used in keys and
 // Msg-Ids. It panics above MaxChunkSeq: the contract does not define a 7-digit form,
@@ -103,9 +136,10 @@ func SubjectIngestCompleted(videoID string) string {
 func SubjectDLQ(consumer, videoID string) string { return "dlq." + consumer + "." + videoID }
 
 // EventFilterSubjects returns the VIDEO_EVENTS filter subjects that select every event of
-// one video. NATS '*' matches exactly one token, so a single "video.chunks.*.{id}" filter
-// would only match the 4-token "uploaded" subject and miss the 5-token "hls.ready" and
-// "ai.indexed" subjects; both shapes are needed.
+// one video (review B1 "Per-video filters", spec section 4). NATS '*' matches exactly one
+// token, so a single "video.chunks.*.{id}" filter would only match the 4-token "uploaded"
+// subject and miss the 5-token "hls.ready" and "ai.indexed" subjects; both shapes are
+// needed. Together with DLQFilterSubjects these are the four documented filters.
 func EventFilterSubjects(videoID string) []string {
 	return []string{
 		"video.chunks.*." + videoID,   // video.chunks.uploaded.{id}
@@ -115,7 +149,90 @@ func EventFilterSubjects(videoID string) []string {
 }
 
 // DLQFilterSubjects returns the VIDEO_DLQ filter subjects for one video (all consumers).
+// Dead letters with an undecodable payload go to dlq.{consumer}.unknown and are not matched.
 func DLQFilterSubjects(videoID string) []string { return []string{"dlq.*." + videoID} }
+
+// ---- Test-only fault hooks (spec 2.5) ----
+
+// TestFault is a fault name for the Fp-Test-Fault header.
+type TestFault string
+
+const (
+	FaultExitOnReceive  TestFault = "exit-on-receive"  // exit 70 before processing; default n unlimited
+	FaultCrashBeforeAck TestFault = "crash-before-ack" // process, PubAck, then exit 70 instead of ack; default n 1
+	FaultFailTransient  TestFault = "fail-transient"   // transient error before any side effect; default n unlimited
+)
+
+func (f TestFault) valid() bool {
+	return f == FaultExitOnReceive || f == FaultCrashBeforeAck || f == FaultFailTransient
+}
+
+func validDurable(c string) bool { return c == ConsumerHls || c == ConsumerAI }
+
+// TestFaultValue builds an Fp-Test-Fault header value:
+// "<fault>; consumer=<durable>[; deliveries=<n>]". deliveries 0 omits the parameter (the
+// fault's default n applies); negative values are rejected.
+func TestFaultValue(fault TestFault, consumer string, deliveries int) (string, error) {
+	if !fault.valid() {
+		return "", fmt.Errorf("unknown test fault %q", fault)
+	}
+	if !validDurable(consumer) {
+		return "", fmt.Errorf("test fault consumer %q: want %s or %s", consumer, ConsumerHls, ConsumerAI)
+	}
+	if deliveries < 0 {
+		return "", fmt.Errorf("test fault deliveries %d: want a positive integer", deliveries)
+	}
+	v := string(fault) + "; consumer=" + consumer
+	if deliveries > 0 {
+		v += "; deliveries=" + strconv.Itoa(deliveries)
+	}
+	return v, nil
+}
+
+// ParsedTestFault is a decoded Fp-Test-Fault value. Deliveries is 0 when not given.
+type ParsedTestFault struct {
+	Fault      TestFault
+	Consumer   string
+	Deliveries int
+}
+
+// ParseTestFaultValue applies the header grammar of review B1 strictly, as workers must
+// (malformed values are dead-lettered as TEST_FAULT_INVALID, never ignored).
+func ParseTestFaultValue(v string) (ParsedTestFault, error) {
+	parts := strings.Split(v, ";")
+	var p ParsedTestFault
+	p.Fault = TestFault(strings.TrimSpace(parts[0]))
+	if !p.Fault.valid() {
+		return p, fmt.Errorf("test fault %q: unknown fault %q", v, p.Fault)
+	}
+	seen := map[string]bool{}
+	for _, kv := range parts[1:] {
+		k, val, ok := strings.Cut(strings.TrimSpace(kv), "=")
+		if !ok || seen[k] {
+			return p, fmt.Errorf("test fault %q: bad or repeated parameter %q", v, kv)
+		}
+		seen[k] = true
+		switch k {
+		case "consumer":
+			if !validDurable(val) {
+				return p, fmt.Errorf("test fault %q: unknown consumer %q", v, val)
+			}
+			p.Consumer = val
+		case "deliveries":
+			n, err := strconv.Atoi(val)
+			if err != nil || n < 1 || val != strconv.Itoa(n) {
+				return p, fmt.Errorf("test fault %q: deliveries %q is not a positive integer", v, val)
+			}
+			p.Deliveries = n
+		default:
+			return p, fmt.Errorf("test fault %q: unknown parameter %q", v, k)
+		}
+	}
+	if p.Consumer == "" {
+		return p, fmt.Errorf("test fault %q: missing consumer", v)
+	}
+	return p, nil
+}
 
 // ---- Nats-Msg-Id values ----
 
@@ -277,22 +394,18 @@ func NewVideoID() (string, error) {
 	return u.String(), nil
 }
 
-// PointIDNamespacePlaceholder is the UUIDv5 namespace for Qdrant point IDs.
-//
-// TODO(contracts): B3 says "UUIDv5 over {video_id}:{seq6} with a fixed FramePulse
-// namespace UUID" but no document defines the UUID. Until contracts/testdata/keys.json
-// pins it, this placeholder is used and can be overridden with FP_POINT_ID_NAMESPACE.
-// Tests that compare point IDs against the real AI Worker fail until both sides agree.
-var PointIDNamespacePlaceholder = uuid.MustParse("00000000-0000-0000-0000-000000000000")
+// PointIDNamespace is the fixed UUIDv5 namespace for Qdrant point IDs (spec 2.2 and A18,
+// review B3). It never changes: a new namespace changes every point ID (full re-index).
+var PointIDNamespace = uuid.MustParse("c1907ffe-0c06-4077-8866-08fb8d658b77")
 
-// PointID returns UUIDv5(namespace, "{video_id}:{seq6}").
-func PointID(namespace uuid.UUID, videoID string, seq uint32) uuid.UUID {
-	return uuid.NewSHA1(namespace, []byte(videoID+":"+Seq6(seq)))
+// PointID returns UUIDv5(PointIDNamespace, "{video_id}:{seq6}").
+func PointID(videoID string, seq uint32) uuid.UUID {
+	return uuid.NewSHA1(PointIDNamespace, []byte(videoID+":"+Seq6(seq)))
 }
 
-// PointIDFromName returns UUIDv5(namespace, name) for names already in "{video_id}:{seq6}"
-// form, as written in the feature files (UUIDv5("V:000042")).
-func PointIDFromName(namespace uuid.UUID, name string) (uuid.UUID, error) {
+// PointIDFromName returns UUIDv5(PointIDNamespace, name) for names already in
+// "{video_id}:{seq6}" form, as written in the feature files (UUIDv5("V:000042")).
+func PointIDFromName(name string) (uuid.UUID, error) {
 	vid, seq, ok := strings.Cut(name, ":")
 	if !ok {
 		return uuid.Nil, fmt.Errorf("point name %q: want {video_id}:{seq6}", name)
@@ -303,7 +416,7 @@ func PointIDFromName(namespace uuid.UUID, name string) (uuid.UUID, error) {
 	if _, err := ParseSeq6(seq); err != nil {
 		return uuid.Nil, err
 	}
-	return uuid.NewSHA1(namespace, []byte(name)), nil
+	return uuid.NewSHA1(PointIDNamespace, []byte(name)), nil
 }
 
 // ThumbnailKeyPayload is the bucket-less thumbnail key stored in the Qdrant payload

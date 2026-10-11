@@ -1,0 +1,8 @@
+# Build context for tests/acceptance/Dockerfile (repository root). BuildKit reads this file
+# instead of a root .dockerignore, so production images are unaffected.
+.git
+.claude
+**/.DS_Store
+# Generated media: the image regenerates fixtures in its own build stage.
+tests/fixtures/media
+# Speech recordings in tests/fixtures/speech/ ARE needed (speech fixture set), keep them.

@@ -1,6 +1,7 @@
 package contracts
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -208,29 +209,146 @@ func TestVideoIDsSortByCreation(t *testing.T) {
 }
 
 func TestPointID(t *testing.T) {
-	ns := uuid.MustParse("6ba7b810-9dad-11d1-80b4-00c04fd430c8") // any fixed namespace
-	p1 := PointID(ns, vid, 42)
-	p2 := PointID(ns, vid, 42)
-	if p1 != p2 {
+	if PointIDNamespace.String() != "c1907ffe-0c06-4077-8866-08fb8d658b77" {
+		t.Fatalf("point-ID namespace %s, want the fixed value from spec A18 / review B3", PointIDNamespace)
+	}
+	p1 := PointID(vid, 42)
+	if p1 != PointID(vid, 42) {
 		t.Fatal("point ID not deterministic")
 	}
 	if p1.Version() != 5 || p1.Variant() != uuid.RFC4122 {
 		t.Fatalf("point ID %s: version %d variant %v, want v5 RFC4122", p1, p1.Version(), p1.Variant())
 	}
-	if p1 == PointID(ns, vid, 43) {
+	if p1 == PointID(vid, 43) {
 		t.Fatal("different chunks share a point ID")
 	}
 	// Must hash the seq6 form, not the bare number.
-	if p1 != uuid.NewSHA1(ns, []byte(vid+":000042")) {
+	if p1 != uuid.NewSHA1(PointIDNamespace, []byte(vid+":000042")) {
 		t.Fatal("point ID is not UUIDv5 over {video_id}:{seq6}")
 	}
-	byName, err := PointIDFromName(ns, vid+":000042")
+	byName, err := PointIDFromName(vid + ":000042")
 	if err != nil || byName != p1 {
 		t.Fatalf("PointIDFromName = %s, %v", byName, err)
 	}
-	for _, bad := range []string{vid + ":42", "V:000042", vid} {
-		if _, err := PointIDFromName(ns, bad); err == nil {
+	for _, bad := range []string{vid + ":42", "V:000042", vid, strings.ToUpper(vid) + ":000042"} {
+		if _, err := PointIDFromName(bad); err == nil {
 			t.Errorf("PointIDFromName(%q) accepted", bad)
+		}
+	}
+}
+
+// Golden values from review B3 (shared with the Go/Rust/Python contracts libraries via
+// contracts/testdata/keys.json once it exists).
+func TestPointIDGolden(t *testing.T) {
+	const goldenVid = "0192f3a4-7b1c-7d2e-9f00-1a2b3c4d5e6f"
+	cases := []struct {
+		seq  uint32
+		want string
+	}{
+		{0, "ce06a6cc-f9c3-5d9f-8bd0-c7212687ea4d"},
+		{42, "b5e27970-263d-5af6-ba86-f5345023df69"},
+	}
+	for _, c := range cases {
+		if got := PointID(goldenVid, c.seq).String(); got != c.want {
+			t.Errorf("PointID(%s, %d) = %s, want %s", goldenVid, c.seq, got, c.want)
+		}
+		got, err := PointIDFromName(goldenVid + ":" + Seq6(c.seq))
+		if err != nil || got.String() != c.want {
+			t.Errorf("PointIDFromName(%s:%s) = %s, %v, want %s", goldenVid, Seq6(c.seq), got, err, c.want)
+		}
+	}
+}
+
+// Review B1 "Per-video filters": exactly these four subjects, three on VIDEO_EVENTS and one
+// on VIDEO_DLQ. Drift here silently drops events from the waiters.
+func TestFilterSubjectsAreTheFourDocumented(t *testing.T) {
+	const v = "0192f3a4-7b1c-7d2e-9f00-1a2b3c4d5e6f"
+	wantEvents := []string{"video.chunks.*." + v, "video.chunks.*.*." + v, "video.lifecycle.*." + v}
+	wantDLQ := []string{"dlq.*." + v}
+	if got := EventFilterSubjects(v); !reflect.DeepEqual(got, wantEvents) {
+		t.Errorf("EventFilterSubjects = %v, want %v", got, wantEvents)
+	}
+	if got := DLQFilterSubjects(v); !reflect.DeepEqual(got, wantDLQ) {
+		t.Errorf("DLQFilterSubjects = %v, want %v", got, wantDLQ)
+	}
+	// dlq.{consumer}.unknown (undecodable payload) is documented as not matchable per video.
+	if subjectMatches(DLQFilterSubjects(v)[0], SubjectDLQ(ConsumerAI, "unknown")) {
+		t.Error("per-video DLQ filter matches dlq.ai-indexer.unknown")
+	}
+}
+
+func TestVideoCap(t *testing.T) {
+	if MaxVideoChunks != 8000 || MaxVideoDuration.Hours() != 4 {
+		t.Fatalf("cap = %d chunks / %s, want 8000 / 4h (spec A13)", MaxVideoChunks, MaxVideoDuration)
+	}
+	for _, ok := range []int64{0, 1, 42, 7999} {
+		if err := ValidateChunkSeq(ok); err != nil {
+			t.Errorf("ValidateChunkSeq(%d): %v", ok, err)
+		}
+	}
+	for _, bad := range []int64{-1, 8000, 8001, MaxChunkSeq, MaxChunkSeq + 1} {
+		if err := ValidateChunkSeq(bad); err == nil {
+			t.Errorf("ValidateChunkSeq(%d) accepted", bad)
+		}
+	}
+	for _, ok := range []int64{1, 6, 8000} {
+		if err := ValidateChunkCount(ok); err != nil {
+			t.Errorf("ValidateChunkCount(%d): %v", ok, err)
+		}
+	}
+	for _, bad := range []int64{0, -1, 8001} {
+		if err := ValidateChunkCount(bad); err == nil {
+			t.Errorf("ValidateChunkCount(%d) accepted", bad)
+		}
+	}
+	// Key builders still format up to the seq6 limit (B2: builders reject > 999,999 only).
+	if got := RawChunk(vid, 8000).Key; !strings.HasSuffix(got, "/chunks/008000.ts") {
+		t.Errorf("RawChunk(8000) = %s", got)
+	}
+}
+
+func TestTestFaultValue(t *testing.T) {
+	cases := []struct {
+		f        TestFault
+		consumer string
+		n        int
+		want     string
+	}{
+		{FaultExitOnReceive, ConsumerAI, 0, "exit-on-receive; consumer=ai-indexer"},
+		{FaultCrashBeforeAck, ConsumerHls, 0, "crash-before-ack; consumer=hls-stream-worker"},
+		{FaultCrashBeforeAck, ConsumerAI, 0, "crash-before-ack; consumer=ai-indexer"},
+		{FaultFailTransient, ConsumerAI, 3, "fail-transient; consumer=ai-indexer; deliveries=3"},
+	}
+	for _, c := range cases {
+		got, err := TestFaultValue(c.f, c.consumer, c.n)
+		if err != nil || got != c.want {
+			t.Errorf("TestFaultValue(%s,%s,%d) = %q, %v; want %q", c.f, c.consumer, c.n, got, err, c.want)
+			continue
+		}
+		p, err := ParseTestFaultValue(got)
+		if err != nil || p != (ParsedTestFault{c.f, c.consumer, c.n}) {
+			t.Errorf("ParseTestFaultValue(%q) = %+v, %v", got, p, err)
+		}
+	}
+	if _, err := TestFaultValue("kill-9", ConsumerAI, 0); err == nil {
+		t.Error("unknown fault accepted")
+	}
+	if _, err := TestFaultValue(FaultExitOnReceive, "embedder", 0); err == nil {
+		t.Error("unknown consumer accepted")
+	}
+	if _, err := TestFaultValue(FaultExitOnReceive, ConsumerAI, -1); err == nil {
+		t.Error("negative deliveries accepted")
+	}
+	// Malformed values a worker must dead-letter as TEST_FAULT_INVALID.
+	for _, bad := range []string{
+		"", "exit-on-receive", "exit-on-receive; consumer=", "exit-on-receive; consumer=other",
+		"exit-on-receive; consumer=ai-indexer; deliveries=0", "exit-on-receive; consumer=ai-indexer; deliveries=-1",
+		"exit-on-receive; consumer=ai-indexer; deliveries=01", "exit-on-receive; consumer=ai-indexer; deliveries=x",
+		"exit-on-receive; consumer=ai-indexer; mode=hard", "exit-on-receive; consumer=ai-indexer; consumer=ai-indexer",
+		"Exit-On-Receive; consumer=ai-indexer", "exit-on-receive; ai-indexer",
+	} {
+		if p, err := ParseTestFaultValue(bad); err == nil {
+			t.Errorf("ParseTestFaultValue(%q) accepted: %+v", bad, p)
 		}
 	}
 }
@@ -244,7 +362,8 @@ func TestFormatTimestampRange(t *testing.T) {
 		{85999, 100001, "00:01:25 - 00:01:41"}, // floor start, ceil end
 		{0, 1, "00:00:00 - 00:00:01"},
 		{3_599_000, 3_661_500, "00:59:59 - 01:01:02"},
-		{86_399_000, 86_400_000, "23:59:59 - 24:00:00"}, // 24 h session limit
+		{14_398_000, 14_400_000, "03:59:58 - 04:00:00"}, // end of a video at the 4 h cap (A13)
+		{86_399_000, 86_400_000, "23:59:59 - 24:00:00"}, // format only; above the cap
 	}
 	for _, c := range cases {
 		if got := FormatTimestampRange(c.s, c.e); got != c.want {

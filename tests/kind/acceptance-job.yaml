@@ -11,7 +11,12 @@ metadata:
   labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
 spec:
   backoffLimit: 0                 # a failed run is a result, never retried
-  activeDeadlineSeconds: 5400     # idle-timeout scenarios take > 5 min each
+  # Budget (kind values: FINALIZE_IDLE_TIMEOUT=10s, sweep 2s, testFaults.enabled): ~35 min for
+  # all non-@load scenarios. Long ones: F4.2 AI crash loop ~6 min (5 x (ack_wait 60 s +
+  # restart)), F4.1 ~2 min of AI backoff (2+10+30+60 s) plus Qdrant scale down/up, F4.3
+  # ~4 min, F6 Background (8 speech chunks, per scenario) ~8 min in total. The deadline sits
+  # above -test.timeout so AfterSuite can still restore scaled workloads.
+  activeDeadlineSeconds: 3300
   ttlSecondsAfterFinished: 3600
   template:
     metadata:
@@ -29,7 +34,7 @@ spec:
         - name: acceptance
           image: __IMAGE__
           imagePullPolicy: IfNotPresent   # image is side-loaded with `kind load docker-image`
-          args: ["-test.run", "^TestFeatures$", "-test.v", "-test.timeout", "85m"]
+          args: ["-test.run", "^TestFeatures$", "-test.v", "-test.timeout", "50m"]
           env:
             - {name: GODOG_TAGS, value: "__GODOG_TAGS__"}
             - {name: GODOG_STRICT, value: "__GODOG_STRICT__"}
@@ -45,7 +50,6 @@ spec:
             - {name: FP_QDRANT_URL, value: "http://framepulse-qdrant:6333"}
             - {name: FP_API_BASE_URL, value: "http://framepulse-serving-api:8080"}
             - {name: FP_FIXTURES_DIR, value: "/fixtures"}
-            # - {name: FP_POINT_ID_NAMESPACE, value: "<from contracts/testdata/keys.json>"}
           resources:
             requests: {cpu: 250m, memory: 256Mi}
             limits: {cpu: "1", memory: 1Gi}

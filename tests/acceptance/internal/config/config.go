@@ -12,10 +12,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
-
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
 )
 
 // Config is the full runner configuration. Secret fields are never printed by String().
@@ -52,8 +48,6 @@ type Config struct {
 	FixturesDir string // FP_FIXTURES_DIR
 
 	StreamWorkerMetricsPort int // FP_STREAM_WORKER_METRICS_PORT (TODO: align with chart)
-
-	PointIDNamespace uuid.UUID // FP_POINT_ID_NAMESPACE (see contracts.PointIDNamespacePlaceholder)
 
 	EventTimeout     time.Duration // FP_EVENT_TIMEOUT: hot-path "Then" waits
 	ColdPathTimeout  time.Duration // FP_COLD_PATH_TIMEOUT: STT + embedding waits
@@ -145,23 +139,17 @@ func load(getenv func(string) string) (*Config, error) {
 
 		StreamWorkerMetricsPort: int(integer("FP_STREAM_WORKER_METRICS_PORT", 9090)),
 
-		EventTimeout:     dur("FP_EVENT_TIMEOUT", 30*time.Second),
-		ColdPathTimeout:  dur("FP_COLD_PATH_TIMEOUT", 2*time.Minute),
-		FinalizeTimeout:  dur("FP_FINALIZE_TIMEOUT", 7*time.Minute), // 5 m idle + 30 s sweep + margin
-		RetryTimeout:     dur("FP_RETRY_TIMEOUT", 4*time.Minute),    // AI backoff 2+10+30+60 s + processing
+		EventTimeout:    dur("FP_EVENT_TIMEOUT", 30*time.Second),
+		ColdPathTimeout: dur("FP_COLD_PATH_TIMEOUT", 2*time.Minute),
+		// kind: FINALIZE_IDLE_TIMEOUT=10s + FINALIZE_SWEEP_INTERVAL=2s (spec 2.2, A15) + margin.
+		// Against production defaults (5m/30s) set FP_FINALIZE_TIMEOUT=7m.
+		FinalizeTimeout: dur("FP_FINALIZE_TIMEOUT", 30*time.Second),
+		// F4.1: AI backoff 2+10+30+60 s + processing (~2 min); F4.2 crash loop:
+		// 5 x (ack_wait 60 s + restart) ~ 6 min. One bound for both, with margin.
+		RetryTimeout:     dur("FP_RETRY_TIMEOUT", 8*time.Minute),
 		RolloutTimeout:   dur("FP_ROLLOUT_TIMEOUT", 3*time.Minute),
 		HTTPTimeout:      dur("FP_HTTP_TIMEOUT", 10*time.Second),
 		MaxResponseBytes: integer("FP_MAX_RESPONSE_BYTES", 8<<20),
-	}
-
-	c.PointIDNamespace = contracts.PointIDNamespacePlaceholder
-	if v := strings.TrimSpace(getenv("FP_POINT_ID_NAMESPACE")); v != "" {
-		ns, err := uuid.Parse(v)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("FP_POINT_ID_NAMESPACE=%q: %w", v, err))
-		} else {
-			c.PointIDNamespace = ns
-		}
 	}
 
 	for key, raw := range map[string]string{
@@ -181,11 +169,6 @@ func load(getenv func(string) string) (*Config, error) {
 	return c, errors.Join(errs...)
 }
 
-// PointIDNamespaceIsPlaceholder reports whether point-ID assertions use the TODO namespace.
-func (c *Config) PointIDNamespaceIsPlaceholder() bool {
-	return c.PointIDNamespace == contracts.PointIDNamespacePlaceholder
-}
-
 // String prints the configuration with secrets redacted, for the run log.
 func (c *Config) String() string {
 	red := func(s string) string {
@@ -195,10 +178,10 @@ func (c *Config) String() string {
 		return "<redacted>"
 	}
 	return fmt.Sprintf("nats=%s creds=%s minio=%s public=%s tls=%t access_key=%s secret_key=%s "+
-		"qdrant=%s qdrant_api_key=%s api=%s namespace=%s kube_context=%q point_ns=%s placeholder_ns=%t "+
+		"qdrant=%s qdrant_api_key=%s api=%s namespace=%s kube_context=%q "+
 		"timeouts(event=%s cold=%s finalize=%s retry=%s rollout=%s http=%s)",
 		c.NATSURL, red(c.NATSCreds), c.MinIOEndpoint, c.MinIOPublicEndpoint, c.MinIOUseTLS,
 		red(c.MinIOAccessKey), red(c.MinIOSecretKey), c.QdrantURL, red(c.QdrantAPIKey),
-		c.APIBaseURL, c.KubeNamespace, c.KubeContext, c.PointIDNamespace, c.PointIDNamespaceIsPlaceholder(),
+		c.APIBaseURL, c.KubeNamespace, c.KubeContext,
 		c.EventTimeout, c.ColdPathTimeout, c.FinalizeTimeout, c.RetryTimeout, c.RolloutTimeout, c.HTTPTimeout)
 }

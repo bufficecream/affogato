@@ -1,6 +1,6 @@
 # FramePulse: Architecture Review & Data Contracts (Draft)
 
-Produced by the architect agent on 2026-10-10; **updated 2026-10-11** with the owner's decisions (see "Resolved decisions (2026-10-11)" at the end). Status: **contracts agreed — ready for implementation.** Line references (Lxx) in Part A point into the original spec, `docs/framepulse_spec.v1.md`; the current spec is `framepulse_spec.md` (v3).
+Produced by the architect agent on 2026-10-10; **updated 2026-10-11** with the owner's decisions (see "Resolved decisions (2026-10-11)" at the end). Status: **contracts agreed — ready for implementation.** QA gap decisions G1–G6 (`docs/test-plan.md`) applied 2026-10-11; see resolved decisions 14–19. Line references (Lxx) in Part A point into the original spec, `docs/framepulse_spec.v1.md`; the current spec is `framepulse_spec.md` (v3).
 
 ---
 
@@ -38,15 +38,15 @@ All of these shape the shared contracts, so each needs a decision before any ser
 
 ### P0 — block the contracts
 1. **Topic naming (F1).** Stream `VIDEO_EVENTS`; subjects `video.chunks.<event>.<video_id>`: `video.chunks.uploaded.{id}`, `video.chunks.hls.ready.{id}`, `video.chunks.ai.indexed.{id}`, `video.lifecycle.completed.{id}`. Dead letters on a separate `VIDEO_DLQ` stream, subject `dlq.{consumer}.{video_id}`.
-2. **Raw chunk format (F3).** MPEG-TS, H.264 + AAC, starts on IDR, ~2 s, continuous PTS. The Producer rejects any other source codec up front, because the hot path only remuxes (spec A12). Producer accepts `.mp4` and cuts with `ffmpeg -c copy -f segment -segment_format mpegts -segment_time 2`. `chunk_seq` 0-based, contiguous. Durations are measured, never assumed to be 2000 ms.
+2. **Raw chunk format (F3).** MPEG-TS, H.264 + AAC, starts on IDR, ~2 s, continuous PTS. The Producer rejects any other source codec up front, because the hot path only remuxes (spec A12). Producer accepts `.mp4` and cuts with `ffmpeg -c copy -f segment -segment_format mpegts -segment_time 2`. `chunk_seq` 0-based, contiguous. Durations are measured, never assumed to be 2000 ms. A video is at most 4 h / 8,000 chunks (spec A13, resolved decision 14): the Producer rejects longer files up front and rolls camera sessions over to a new `video_id`.
 3. **Hot path scope (F4, F6).** MVP remuxes (`-c copy`) to one rendition `src`, validates with ffprobe, grabs one thumbnail. 500 ms SLO = p99 publish-to-delivery; add segment-ready SLO p95 1.5 s (publish until the segment is READY in `HLS_INDEX`). Budget ≈ 400–500 ms.
 4. **Playlist ownership (F5).** Segment state in NATS KV `HLS_INDEX`, key `{video_id}.{rendition}`, CAS updates. MVP is VOD-only (decided 2026-10-11): the Serving API does not render playlists. The Stream Worker writes static `playlist.m3u8` (`#EXT-X-PLAYLIST-TYPE:VOD`, `#EXT-X-ENDLIST`) and `master.m3u8` once at finalization (when the index holds `expected_chunk_count` from `VideoIngestCompleted` and every chunk is READY/FAILED). It renders them deterministically from the index sorted by `chunk_seq` (out-of-order processing is expected), PUTs both, then CAS-sets `finalized=true`, so concurrent or repeated finalization writes identical bytes and the API never sees a finalized video without playlists. FAILED chunks are omitted and the next READY segment is preceded by `#EXT-X-DISCONTINUITY`. Playlists are kept after finalization. Live playback (API-rendered `EVENT` playlist from `HLS_INDEX`) is spec Future Work item 1; the KV design already supports it. The Stream Worker writes the FAILED status (CAS on `HLS_INDEX`) in the same step where it dead-letters the chunk.
 5. **Fan-out (F7).** One Limits-retention stream, two durable pull consumers `hls-stream-worker` and `ai-indexer`; replicas share their consumer. Limits (not Interest) to allow replay/reindex within the 7 d `max_age`; older reprocessing reads stored artifacts from `fp-media` (transcripts for re-embedding, HLS segments for re-transcription).
 6. **Failures and DLQ (F8).**
    - Classify errors permanent vs transient.
    - Permanent → explicit republish to DLQ, then `Term()`.
-   - Transient → `Nak(delay)` with worker-chosen exponential delays.
-   - Worker cap: on receipt, if `num_delivered > 5`, dead-letter before processing (catches crash loops).
+   - Transient → `Nak(delay)` on attempts 1–4 with worker-chosen exponential delays.
+   - Worker cap: at most 5 processing attempts. A transient error on attempt 5 dead-letters (`RETRIES_EXHAUSTED`, `delivery_count` 5) and `Term()`s immediately; a message received with `num_delivered ≥ 6` (only after a crash or failed DLQ publish during attempt 5) is dead-lettered on receipt without processing (catches crash loops). See B1 "DLQ mechanism".
    - Server `max_deliver = 10` as a ceiling only; its MAX_DELIVERIES advisory feeds alerting.
    - ffmpeg/ffprobe always as subprocesses with hard timeout and `kill_on_drop`.
 7. **Idempotency.** Deterministic `Nats-Msg-Id`, object keys, Qdrant point IDs (UUIDv5), set-semantic KV CAS. Order: outputs → KV → publish result (await PubAck) → ack input.
@@ -66,11 +66,12 @@ All of these shape the shared contracts, so each needs a decision before any ser
 16. **Test env (decided 2026-10-11).** Kubernetes-only; no docker compose, no testcontainers.
     - Unit tests per service run with no infrastructure (in-memory fakes for NATS, S3 and Qdrant; ffmpeg tests use committed fixture media).
     - Acceptance/BDD tests (godog) run against a local `kind` cluster, locally and in CI. The production Helm chart `deploy/helm/framepulse` is installed with `values-kind.yaml`.
-    - Fault injection scales workloads with `kubectl`.
-    - "Then" steps wait on result events via an ordered consumer filtered by `video_id`.
+    - Fault injection scales workloads with `kubectl`; crashes and missing acks use the test-only fault hooks (B1 "Test-only fault hooks"), enabled only by `values-kind.yaml`.
+    - "Then" steps wait on result events via ordered consumers filtered by `video_id` (four filter subjects, B1 "Per-video filters").
+    - `values-kind.yaml` sets `FINALIZE_IDLE_TIMEOUT=10s` and `FINALIZE_SWEEP_INTERVAL=2s` (production defaults `5m` / `30s`).
 
 ### P2
-Moved to spec §6 "Future Work": live playback, video deletion, multi-bitrate ladder, windowed embeddings, Japanese/Chinese tuning, auth/tenancy (NATS accounts with least-privilege permissions, `tenant_id`), GPU node pool, manual finalize command (idle-timeout finalization is in the MVP; see resolved decision 11).
+Moved to spec §6 "Future Work": live playback, video deletion, multi-bitrate ladder, windowed embeddings, Japanese/Chinese tuning, auth/tenancy (NATS accounts with least-privilege permissions, `tenant_id`), GPU node pool, manual finalize command (idle-timeout finalization is in the MVP; see resolved decision 11), index sharding for videos longer than 4 h (resolved decision 14).
 
 ---
 
@@ -102,9 +103,20 @@ Subjects (last token always `video_id`):
 - `dlq.{consumer}.{video_id}` (`unknown` if payload undecodable)
 - `svc.embed.v1.embed` — core NATS request-reply, not stored
 
+**Per-video filters.** NATS `*` matches exactly one token and event subjects have 4 or 5 tokens, so `video.chunks.*.{video_id}` alone matches only `uploaded`. A subscription for every message of one video needs:
+
+| Stream | Filter subject | Matches |
+|---|---|---|
+| `VIDEO_EVENTS` | `video.chunks.*.{video_id}` | `uploaded` |
+| `VIDEO_EVENTS` | `video.chunks.*.*.{video_id}` | `hls.ready`, `ai.indexed` |
+| `VIDEO_EVENTS` | `video.lifecycle.*.{video_id}` | `completed` (and future lifecycle events) |
+| `VIDEO_DLQ` | `dlq.*.{video_id}` | dead letters from every consumer (not `dlq.{consumer}.unknown`) |
+
+New event subjects must keep `video_id` as the last token and fit one of these shapes. `contracts/testdata/keys.json` lists the filters per video; the contracts libraries expose a builder for them.
+
 Schema version lives in the header and proto package, not the subject.
 
-KV bucket `HLS_INDEX`: history 1, R3, file, max_value_size 1 MiB; key `{video_id}.{rendition}`; value `framepulse.state.v1.HlsIndex`. It tracks per-segment READY/FAILED status, measured durations and the `finalized` flag. In the VOD-only MVP the Serving API reads it only to decide playlist responses (404 / 409 / 200).
+KV bucket `HLS_INDEX`: history 1, R3, file, max_value_size 1 MiB; key `{video_id}.{rendition}`; value `framepulse.state.v1.HlsIndex`. **Size budget:** a `Segment` entry encodes to ≤ 19 B (`chunk_seq` ≤ 3-byte varint, `media_time` ms as ≤ 4-byte varints, status; no key string), so the 8,000-chunk cap (spec A13) bounds the value at ≈ 152 KB + ~60 B of header fields, 6.9× below `max_value_size` and the NATS `max_payload` (1 MiB). With the former `Segment.key` (~82 B per entry) 8,000 chunks would be ≈ 656 KB (1.6×, under the required 2× margin), and 1 MiB would be hit at ~12,300 chunks (~6.8 h). Each CAS rewrites the whole value (≈ 640 MB written over the life of an 8,000-chunk video, ×3 replicas); acceptable for the MVP, and index sharding is spec Future Work 9. It tracks per-segment READY/FAILED status, measured durations and the `finalized` flag. In the VOD-only MVP the Serving API reads it only to decide playlist responses (404 / 409 / 200).
 
 ### Consumers (durable, pull)
 
@@ -114,18 +126,53 @@ KV bucket `HLS_INDEX`: history 1, R3, file, max_value_size 1 MiB; key `{video_id
 | deliver_policy | all | all |
 | ack_policy | explicit | explicit |
 | ack_wait | 15s (ffmpeg timeout 10s) | 60s (pipeline timeout 45s for the default `small` model, configurable via `AI_PIPELINE_TIMEOUT`; `AckProgress` every 15s keeps longer runs alive) |
-| max_deliver | 10 (ceiling; worker cap 5) | 10 (worker cap 5) |
-| backoff | worker NAK delays 1s, 2s, 5s, 15s | worker NAK delays 2s, 10s, 30s, 60s |
+| max_deliver | 10 (server ceiling; worker cap: 5 processing attempts) | 10 (server ceiling; worker cap: 5 processing attempts) |
+| backoff | worker NAK delays after attempts 1–4: 1s, 2s, 5s, 15s | worker NAK delays after attempts 1–4: 2s, 10s, 30s, 60s |
 | max_ack_pending | 512 | 32 |
 | client fetch | `consume()` max_messages = cores, heartbeat 5s | max_messages = 1 per process |
 
 **DLQ mechanism — worker republishes explicitly:**
-1. On receipt, `num_delivered > 5` → publish `DeadLetter` (`ERROR_CLASS_RETRIES_EXHAUSTED`), `Term()`.
-2. Permanent error → `DeadLetter`, `Term()`.
-3. Transient error → `Nak(delay)`; on the 5th attempt, step 1.
-4. DLQ publish fails → `Nak(delay)`, never Term.
+Attempt n is the delivery with `num_delivered` = n; a message gets at most 5 processing attempts.
+1. On receipt, `num_delivered ≥ 6` → publish `DeadLetter` (`ERROR_CLASS_RETRIES_EXHAUSTED`, `delivery_count` = `num_delivered`) without processing, then `Term()`. Only reachable after a crash (no ack/nak) or a failed DLQ publish during attempt 5.
+2. Test-only fault hook, if enabled and requested for this consumer (see "Test-only fault hooks").
+3. Permanent error on any attempt → `DeadLetter` (its error class, `delivery_count` = n), `Term()`.
+4. Transient error on attempts 1–4 → `Nak(delay[n])`.
+5. Transient error on attempt 5 → `DeadLetter` (`ERROR_CLASS_RETRIES_EXHAUSTED`, `delivery_count` 5), `Term()` immediately; no 5th `Nak`.
+6. DLQ publish fails (steps 1, 3, 5) → `Nak(delay)`, never `Term()`; the redelivery then hits step 1. Server `max_deliver = 10` stays a ceiling whose MAX_DELIVERIES advisory only feeds alerting.
 
-**Redrive** (`fpctl dlq redrive --consumer X --since T`): republish `original_payload` to `original_subject` with original headers, `Nats-Msg-Id = {orig}:redrive:{n}`. Redrive only works while the raw chunk exists, so the `fp-raw` expiry (10 d) must stay longer than the `VIDEO_DLQ` `max_age` (7 d).
+**Redrive** (`fpctl dlq redrive --consumer X --since T`): republish `original_payload` to `original_subject` with original headers, `Nats-Msg-Id = {orig}:redrive:{n}`. Redrive only works while the raw chunk exists, so the `fp-raw` expiry (10 d) must stay longer than the `VIDEO_DLQ` `max_age` (7 d). Redrive drops the `Fp-Test-Fault` header from the republished headers.
+
+### Test-only fault hooks (spec 2.5)
+
+Purpose: make "crash loop" (spec Feature 4) and "processed but not acked" (Feature 5) deterministic in acceptance tests. kind and production run the same images; the hooks are gated at runtime, not compiled out, so the tested binary is the shipped binary.
+
+**Enablement**
+- Env `FP_TEST_FAULTS`: unset, empty or `0` → disabled (header ignored, not parsed); `1` → enabled; any other value → startup fails with a clear log line.
+- An enabled worker logs a startup warning and exports gauge `fp_test_faults_enabled` = 1 (alert if it is ever 1 outside kind).
+- Helm value `testFaults.enabled` (default `false`) renders `FP_TEST_FAULTS=1` into the Stream Worker and AI Worker deployments. Only `values-kind.yaml` sets it. CI step 7 fails if `helm template -f values-prod.yaml` output contains `FP_TEST_FAULTS`.
+- Producer, Serving API and Embedder have no hooks.
+- The MVP has no NATS auth (spec A9), so anyone who can publish can set the header; the env gate is the only control and must stay enforced in CI.
+
+**Header grammar** (one header value per fault; several values allowed):
+```
+Fp-Test-Fault: <fault>; consumer=<durable>[; deliveries=<n>]
+<fault>   = exit-on-receive | crash-before-ack | fail-transient
+<durable> = hls-stream-worker | ai-indexer
+<n>       = positive integer; the fault fires only while num_delivered <= n
+```
+- Scoped per message and per consumer: a worker applies only values whose `consumer` is its own durable name; the other path processes the message normally.
+- Honored on any message delivered to that consumer (`VideoChunkUploaded`, `VideoIngestCompleted`).
+- When enabled, a malformed value (unknown fault or parameter, missing `consumer`, bad `n`) → `DeadLetter` `ERROR_CLASS_SCHEMA`, `error_code` `TEST_FAULT_INVALID`, `Term()`; never silently ignored.
+- Order in the worker: delivery-cap check (DLQ step 1) → fault hook → processing.
+- Workers never copy `Fp-Test-Fault` onto result events; `DeadLetter.original_headers` keeps it verbatim, and redrive strips it.
+
+| Fault | Fires | Effect | Default `n` | Stream Worker | AI Worker | Used by |
+|---|---|---|---|---|---|---|
+| `exit-on-receive` | after the cap check, before any side effect | process exits with code 70, no ack/nak; redelivered after `ack_wait` | unlimited | yes | yes | Feature 4 crash loop: deliveries 1–5 crash, delivery 6 is dead-lettered on receipt with `delivery_count` 6 |
+| `crash-before-ack` | after outputs, KV update and the result event's PubAck, in place of the ack | process exits with code 70 | 1 | yes | yes | Feature 5 "processed but not acked": delivery 2 is processed and acked normally |
+| `fail-transient` | before any side effect | handled as a transient error (DLQ steps 4–5) | unlimited | yes | yes | DLQ-cap checks (`delivery_count` 5) without scaling dependencies; recovery tests with `deliveries=k` |
+
+Timing in kind: each crashed delivery waits one `ack_wait` (15 s hot path, 60 s AI) plus the container restart, so the AI crash-loop scenario takes about 5–6 min; `crash-before-ack` costs one `ack_wait`.
 
 ### Headers
 
@@ -136,6 +183,7 @@ KV bucket `HLS_INDEX`: history 1, R3, file, max_value_size 1 MiB; key `{video_id
 | `Fp-Schema` | fully qualified message name, e.g. `framepulse.events.v1.VideoChunkUploaded`; unknown → DLQ as `ERROR_CLASS_SCHEMA` |
 | `Fp-Producer` | e.g. `stream-worker/1.4.2` |
 | `traceparent` / `tracestate` | W3C, lowercase |
+| `Fp-Test-Fault` | Test only; honored only when the worker runs with `FP_TEST_FAULTS=1` (kind). `<fault>; consumer=<durable>[; deliveries=<n>]`, see "Test-only fault hooks". Never copied onto result events; stripped by redrive |
 
 Latency metric: `fp_consume_latency_seconds = now − msg.metadata.timestamp`.
 
@@ -320,7 +368,7 @@ enum ErrorClass {
   ERROR_CLASS_CHECKSUM_MISMATCH = 3;
   ERROR_CLASS_SCHEMA = 4;              // undecodable payload / unknown Fp-Schema
   ERROR_CLASS_TIMEOUT = 5;             // subprocess/pipeline timeout (permanent after cap)
-  ERROR_CLASS_RETRIES_EXHAUSTED = 6;   // transient failures or crash loop > cap
+  ERROR_CLASS_RETRIES_EXHAUSTED = 6;   // transient failure on attempt 5, or received with num_delivered >= 6
   ERROR_CLASS_INTERNAL = 7;
 }
 
@@ -356,7 +404,7 @@ Supporting contracts (same conventions, fields abbreviated):
 - `framepulse/state/v1/hls_index.proto`
   - `HlsIndex { string video_id=1; string rendition=2; repeated Segment segments=3 /*sorted by seq*/; uint32 expected_chunk_count=4 /*0 = unknown*/; bool finalized=5; google.protobuf.Timestamp last_activity_at=6 /*stamped on every update*/; FinalizeReason finalize_reason=7; }`
   - `enum FinalizeReason { FINALIZE_REASON_UNSPECIFIED=0; FINALIZE_REASON_COMPLETED=1; FINALIZE_REASON_IDLE_TIMEOUT=2; }`
-  - `Segment { uint32 chunk_seq=1; string key=2; TimeRange media_time=3; SegmentStatus status=4; }`
+  - `Segment { uint32 chunk_seq=1; reserved 2; reserved "key"; TimeRange media_time=3; SegmentStatus status=4; }`. The segment key is derived (`videos/{video_id}/hls/{rendition}/{seq6}.ts`, built by the contracts libraries), not stored; this keeps an entry ≤ 19 B (B1 KV size budget).
   - `enum SegmentStatus { SEGMENT_STATUS_UNSPECIFIED=0; SEGMENT_STATUS_READY=1; SEGMENT_STATUS_FAILED=2; }`
 - `framepulse/artifacts/v1/transcript.proto`
   - `Transcript { ChunkRef chunk=1; TimeRange media_time=2; string language=3; string stt_model=4; string text=5; repeated TranscriptSegment segments=6; }`
@@ -382,7 +430,7 @@ Supporting contracts (same conventions, fields abbreviated):
 - `fp-media` — derived artifacts, including the final playlists; kept until the video is deleted (deletion is Future Work).
 - Both: abort incomplete multipart uploads after 1 day; versioning off.
 
-**Keys** (`seq6` = zero-padded 6-digit 0-based `chunk_seq`; one `video_id` per ≤24 h recording session):
+**Keys** (`seq6` = zero-padded 6-digit 0-based `chunk_seq`; a video has at most 8,000 chunks (4 h, spec A13), so 6 digits leave ample room and the format stays fixed; key builders reject seq > 999,999, event validation rejects `chunk_seq` ≥ 8,000):
 
 | Artifact | Bucket / key | Example | Content-Type | Cache-Control |
 |---|---|---|---|---|
@@ -412,7 +460,7 @@ Supporting contracts (same conventions, fields abbreviated):
 ## B3. Qdrant
 - Alias `transcripts` → physical `transcripts_me5s384_v1` (model `intfloat/multilingual-e5-small`). A new model means a new collection, re-embedding the stored transcripts from `fp-media`, then an alias swap. The AI worker and the embedder fail at startup if the alias does not resolve to their model's collection.
 - Vectors: 384-dim, Cosine, default HNSW, payload on disk.
-- Point ID: UUIDv5 over `"{video_id}:{seq6}"` with a fixed FramePulse namespace UUID; upsert `wait=true`.
+- Point ID: UUIDv5 (RFC 9562, SHA-1) with namespace **`c1907ffe-0c06-4077-8866-08fb8d658b77`** over the UTF-8 name `"{video_id}:{seq6}"` (lowercase `video_id`), written as a lowercase hyphenated UUID; upsert `wait=true`. The namespace is fixed forever: changing it changes every point ID and means a full re-index (new collection + alias swap). Golden examples: `0192f3a4-7b1c-7d2e-9f00-1a2b3c4d5e6f:000000` → `ce06a6cc-f9c3-5d9f-8bd0-c7212687ea4d`; `0192f3a4-7b1c-7d2e-9f00-1a2b3c4d5e6f:000042` → `b5e27970-263d-5af6-ba86-f5345023df69`. The constant lives in `contracts/testdata/keys.json` (`point_id_namespace`) and in each contracts library.
 - Payload: `video_id` (keyword, indexed), `chunk_seq` (int, indexed), `start_ms`/`end_ms` (int, `start_ms` indexed), `text`, `language` (keyword, indexed), `thumbnail_key`, `transcript_key`, `stt_model`, `embedding_model`, `indexed_at_ms`, `source_id`.
 - Points only for `INDEX_OUTCOME_INDEXED`.
 - Search: embed query (`PURPOSE_QUERY`) → top 50 → merge adjacent chunks per video → top N; timestamps floor/ceil to the second, `HH:MM:SS`.
@@ -431,7 +479,8 @@ contracts/
   nats/streams/*.json, nats/consumers/*.json, nats/kv/*.json   applied by NACK / init Job
   qdrant/transcripts_me5s384_v1.json
   testdata/*.txtpb -> *.binpb   golden fixtures via `buf convert`
-  testdata/keys.json            golden vectors: inputs -> subjects, Msg-Ids, keys, point IDs
+  testdata/keys.json            golden vectors: inputs -> subjects, per-video filters, Msg-Ids, keys, point IDs;
+                                top-level "point_id_namespace": "c1907ffe-0c06-4077-8866-08fb8d658b77"
 libs/go/fpcontracts  libs/rust/fp-contracts  libs/python/fp_contracts
                                subject/key/Msg-Id/point-ID builders + validation, tested against keys.json
 services/producer (Go)  services/serving-api (Go, Gin)  services/stream-worker (Rust)  services/ai-worker (Python; worker + embedder)
@@ -448,7 +497,7 @@ Python uses the official `protobuf` runtime (upb) + `.pyi` stubs rather than bet
 4. `buf generate && git diff --exit-code gen/`
 5. Cross-language contract tests: every language decodes `testdata/*.binpb` and checks `keys.json`.
 6. Unit tests per service, no infrastructure: `go test ./...`, `cargo test`, `pytest` (NATS/S3/Qdrant behind interfaces with in-memory fakes; ffmpeg tests use committed fixture media).
-7. Chart checks: `helm lint`, `helm template … | kubeconform`.
+7. Chart checks: `helm lint`, `helm template … | kubeconform`; the output of `helm template -f values-prod.yaml` must not contain `FP_TEST_FAULTS`.
 8. Acceptance (every PR):
    - build images
    - create a `kind` cluster
@@ -472,6 +521,12 @@ The owner's answers to the former open questions. The spec (§5 Assumptions & De
 8. **Names.** Module path placeholder `github.com/framepulse/framepulse` stays; `gen/` committed in the monorepo.
 9. **No auth/tenancy in MVP.** `ChunkRef` field 3 is held for `tenant_id`.
 10. **Kubernetes-only testing.** Compose and testcontainers are dropped. Acceptance/BDD tests (godog) run on a local `kind` cluster, the same in CI, deploying the production Helm chart with `values-kind.yaml`. Unit tests per service run without infrastructure (decision 16, CI steps 6–9).
-11. **Abandoned uploads.** Force-finalize after 5 min with no `HLS_INDEX` activity (`FINALIZE_IDLE_TIMEOUT`, default `5m`; sweeper every 30 s in each Stream Worker replica). `n` = `expected_chunk_count` or highest seen seq + 1; missing/pending chunks are treated as FAILED; `finalize_reason = IDLE_TIMEOUT`. Zero READY chunks → finalized with no playlist, endpoints return 410. Late events never reopen a finalized video (late chunks counted in `fp_late_chunks_total`). New `HlsIndex` fields 6–7 above.
+11. **Abandoned uploads.** Force-finalize after 5 min with no `HLS_INDEX` activity (`FINALIZE_IDLE_TIMEOUT`, default `5m`; sweeper every 30 s in each Stream Worker replica; `values-kind.yaml` uses `10s` with a `2s` sweep, see resolved decision 18). `n` = `expected_chunk_count` or highest seen seq + 1; missing/pending chunks are treated as FAILED; `finalize_reason = IDLE_TIMEOUT`. Zero READY chunks → finalized with no playlist, endpoints return 410. Late events never reopen a finalized video (late chunks counted in `fp_late_chunks_total`). New `HlsIndex` fields 6–7 above.
 12. **Search shows unfinished videos** with a `status` field (`processing` / `ready` / `failed`).
 13. **Language detection stays per chunk** in the MVP; per-video pinning is spec Future Work item 5.
+14. **Video length cap (QA G2).** At most 4 h of media and 8,000 chunks per video; `Segment.key` dropped (field 2 reserved), so `HlsIndex` stays ≤ ~152 KB (B1 KV size budget). The Producer rejects longer files before any upload and rolls camera sessions over to a new `video_id`; workers dead-letter `chunk_seq ≥ 8000` or `chunk_count > 8000` as `ERROR_CLASS_SCHEMA`. Replaces the former 24 h session default (spec A13). Index sharding is spec Future Work 9.
+15. **Point-ID namespace (QA G1).** `c1907ffe-0c06-4077-8866-08fb8d658b77`, fixed forever (B3, spec A18).
+16. **DLQ cap (QA G3).** Dead-letter on the 5th delivery: at most 5 processing attempts; a transient failure on attempt 5 → `RETRIES_EXHAUSTED` + `Term()`; `num_delivered ≥ 6` → dead-lettered on receipt (B1 "DLQ mechanism", spec A19).
+17. **Test fault hooks (QA G5).** `Fp-Test-Fault` header honored only with `FP_TEST_FAULTS=1`, set only by `values-kind.yaml` (B1 "Test-only fault hooks", spec 2.5 / A20).
+18. **Idle timeout in tests (QA G6).** Production `5m` / sweep `30s`; `values-kind.yaml` `10s` / `2s`.
+19. **Per-video filters (QA G4).** Four filter subjects across `VIDEO_EVENTS` and `VIDEO_DLQ` (B1 "Per-video filters").

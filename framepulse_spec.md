@@ -1,7 +1,7 @@
 # FramePulse: System Architecture & BDD Master Specification
 
-> Status: spec v3 (2026-10-11) — owner decisions applied; aligned with
-> `docs/architecture-review.md`.
+> Status: spec v3.1 (2026-10-11) — owner decisions applied, including the QA gap
+> decisions G1–G6 from `docs/test-plan.md`; aligned with `docs/architecture-review.md`.
 > This document states **what** the system does and how it is accepted. The detailed
 > contracts (protobuf messages, stream/consumer/KV configuration, object metadata,
 > Qdrant payload schema, repo layout, CI) live in `docs/architecture-review.md`
@@ -21,7 +21,9 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
 - **Producer (Go CLI):** Accepts an `.mp4` file (or camera feed), cuts it **without
   re-encoding** into ~2 s MPEG-TS chunks (H.264 + AAC, each starting on a keyframe),
   uploads each chunk to MinIO, then publishes a `VideoChunkUploaded` event. Publishes
-  `VideoIngestCompleted` after the last chunk.
+  `VideoIngestCompleted` after the last chunk. A video is at most **4 h** of media and
+  **8,000 chunks** (A13): longer files are rejected before any upload, and a camera
+  session rolls over to a new `video_id` at the cap.
 - **Chunk:** One ~2 s MPEG-TS piece of a video, identified by `video_id` (UUIDv7) and
   `chunk_seq` (0-based, contiguous). Durations are measured from timestamps, never assumed.
 - **NATS JetStream:** Durable event log. Stream `VIDEO_EVENTS` carries all pipeline
@@ -47,11 +49,13 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
   until it is finalized, then serves its static playlists by proxying them from MinIO;
   redirects segment and thumbnail requests to presigned MinIO URLs; serves semantic search.
 - **Dead Letter Queue (DLQ):** Stream `VIDEO_DLQ`. A worker publishes a `DeadLetter`
-  there for a permanent failure, or after 5 delivery attempts; operators can redrive.
+  there for a permanent failure, or when the 5th delivery attempt fails transiently
+  (at most 5 processing attempts, see 2.2); operators can redrive.
 - **Finalization:** Once `VideoIngestCompleted` has arrived and every chunk is READY or
   FAILED, the Stream Worker writes the static VOD playlists (`#EXT-X-ENDLIST`) to MinIO
   and marks the index finalized. Only then is the video playable. If a video sees no
-  activity for 5 minutes (`FINALIZE_IDLE_TIMEOUT`), it is **force-finalized** with the
+  activity for 5 minutes (`FINALIZE_IDLE_TIMEOUT` default; 10 s in the kind test
+  cluster), it is **force-finalized** with the
   chunks it has (see 2.2).
 
 ---
@@ -93,7 +97,7 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
 | Stream | `VIDEO_EVENTS` | subjects `video.chunks.>`, `video.lifecycle.>`; limits retention, 7 d |
 | Stream | `VIDEO_DLQ` | subject `dlq.{consumer}.{video_id}`; 7 d |
 | Stream | `FP_ADVISORIES` | JetStream MAX_DELIVERIES advisories, alerting only; 7 d |
-| KV | `HLS_INDEX` | key `{video_id}.{rendition}`; per-segment status, durations, `finalized`; updated by compare-and-set |
+| KV | `HLS_INDEX` | key `{video_id}.{rendition}`; per-segment status, durations, `finalized`; updated by compare-and-set; value ≤ ~152 KB at the 8,000-chunk cap (A13), `max_value_size` 1 MiB |
 | Subject | `video.chunks.uploaded.{video_id}` | `VideoChunkUploaded` (Producer) |
 | Subject | `video.chunks.hls.ready.{video_id}` | `ChunkHlsReady` (Stream Worker) |
 | Subject | `video.chunks.ai.indexed.{video_id}` | `ChunkTranscriptIndexed` (AI Worker) |
@@ -150,8 +154,10 @@ Search results can refer to videos that are not finalized yet. Every result carr
 - **Ordering of side effects (both workers):** write outputs → update KV (hot path only) →
   publish result event and wait for the PubAck → ack the input.
 - **Idempotency:** Fixed object keys, `Nats-Msg-Id`s and Qdrant point IDs
-  (UUIDv5 of `{video_id}:{seq6}`), and set-semantic KV updates, so a redelivery
-  overwrites the same outputs with the same content.
+  (UUIDv5 of `{video_id}:{seq6}` in the fixed namespace
+  `c1907ffe-0c06-4077-8866-08fb8d658b77`; changing the namespace means a full
+  re-index, A18), and set-semantic KV updates, so a redelivery overwrites the same
+  outputs with the same content.
 - **Out-of-order processing:** Chunks of one video may be processed in any order by any
   replica; `HLS_INDEX` keeps segments sorted by `chunk_seq`, so ordering is applied when
   the playlists are rendered, not when chunks arrive.
@@ -171,8 +177,11 @@ Search results can refer to videos that are not finalized yet. Every result carr
   proxies a missing playlist. The index records `finalize_reason = COMPLETED`.
 - **Idle-timeout finalization (decided 2026-10-11):** Every `HLS_INDEX` update stamps
   `last_activity_at`. Each Stream Worker replica runs a sweeper every 30 s
-  (`FINALIZE_SWEEP_INTERVAL`) over non-finalized keys. A key whose `last_activity_at` is
-  older than `FINALIZE_IDLE_TIMEOUT` (default **5 min**) is force-finalized:
+  (`FINALIZE_SWEEP_INTERVAL`, default 30 s) over non-finalized keys. A key whose
+  `last_activity_at` is older than `FINALIZE_IDLE_TIMEOUT` (default **5 min**) is
+  force-finalized. Production keeps these defaults; the kind test cluster
+  (`values-kind.yaml`) sets `FINALIZE_IDLE_TIMEOUT=10s` and `FINALIZE_SWEEP_INTERVAL=2s`
+  so acceptance scenarios finish quickly:
   1. `n` = `expected_chunk_count` if known, otherwise highest seen `chunk_seq` + 1;
   2. any chunk in `0..n-1` that is missing or still pending is treated as FAILED (omitted,
      next READY segment preceded by `#EXT-X-DISCONTINUITY`);
@@ -181,17 +190,30 @@ Search results can refer to videos that are not finalized yet. Every result carr
   4. if no chunk is READY, no playlist is written; the index is finalized with
      `finalize_reason = IDLE_TIMEOUT` and zero segments, and the playlist endpoints
      return **410 Gone** with `{"status":"failed"}`.
-  The 5 min default is far longer than the worst-case hot-path retry span (~25 s).
+  The 5 min production default is far longer than the worst-case hot-path retry span
+  (~25 s: NAK delays 1 + 2 + 5 + 15 s plus processing). The 10 s kind value is shorter
+  than that span, so in kind a video whose chunk is still being retried, or waits for a
+  redelivery, can be force-finalized first (the chunk then counts as late); acceptance
+  scenarios that need an unfinalized video must finish within the idle timeout.
   Events arriving after finalization do not reopen the video: a late chunk is still
   processed (segment and thumbnail written) but the index and playlists are unchanged,
   and it is counted in metric `fp_late_chunks_total` with a warning log; a late
   `VideoIngestCompleted` is acked as a no-op.
 - **Failures:** Permanent errors (invalid media, missing object, checksum mismatch, bad
-  schema) → `DeadLetter` to `VIDEO_DLQ`, then `Term()`. Transient errors → `Nak` with
-  backoff. A worker sends a message to the DLQ on receipt if it has already been
-  delivered more than 5 times (catches crash loops). ffmpeg/ffprobe always run as
+  schema) → `DeadLetter` to `VIDEO_DLQ`, then `Term()`. ffmpeg/ffprobe always run as
   separate processes with a hard timeout, so bad media cannot crash a worker. When the
   Stream Worker dead-letters a chunk, it also marks that chunk FAILED in `HLS_INDEX`.
+  Transient errors are retried; a message gets **at most 5 processing attempts**
+  (attempt n = the JetStream delivery with `num_delivered` = n):
+  - transient error on attempts 1–4 → `Nak` with the next backoff delay;
+  - transient error on attempt 5 → `DeadLetter` (`ERROR_CLASS_RETRIES_EXHAUSTED`,
+    `delivery_count` 5), then `Term()` immediately (no 5th `Nak`);
+  - received with `num_delivered` ≥ 6 (only possible after a crash during attempt 5, or a
+    failed DLQ publish) → dead-lettered on receipt without processing
+    (`ERROR_CLASS_RETRIES_EXHAUSTED`, `delivery_count` = `num_delivered`), then `Term()`.
+    This breaks crash loops.
+
+  If the DLQ publish itself fails, the worker `Nak`s and never `Term`s.
 - **Latency targets** (wording to be revisited during development):
   - Hot path: p99 **500 ms** from publish to delivery, measured from the stream
     timestamp. p95 **1.5 s** from publish until the segment is READY in `HLS_INDEX`
@@ -241,6 +263,35 @@ Search results can refer to videos that are not finalized yet. Every result carr
 After 7 d, reprocessing does not use stream replay: re-embedding reads the stored
 transcripts, and re-transcription reads the HLS segments in `fp-media` (remuxed, so the
 audio is identical to the raw chunk).
+
+### 2.5 Test-only fault hooks (kind only)
+
+The Stream Worker and the AI Worker contain fault hooks so acceptance tests can produce
+crashes and missing acks deterministically. They are off unless the process starts with
+env `FP_TEST_FAULTS=1`:
+- `FP_TEST_FAULTS` unset, empty or `0` → hooks disabled; the `Fp-Test-Fault` header is
+  ignored without being parsed. Any other value except `1` → the worker refuses to start.
+- Only `values-kind.yaml` sets `testFaults.enabled: true`, which makes the chart render
+  `FP_TEST_FAULTS=1`. `values-prod.yaml` never sets it, and CI fails if the rendered
+  production manifests contain `FP_TEST_FAULTS`. An enabled worker logs a warning at
+  startup and exports `fp_test_faults_enabled 1`.
+- When enabled, the test requests a fault per message with header
+  `Fp-Test-Fault: <fault>; consumer=<durable>[; deliveries=<n>]` on the event it
+  publishes. The fault applies only to the named consumer (the other path processes the
+  message normally) and only while `num_delivered` ≤ `n`.
+
+| Fault | Effect | Default `n` | Supported by |
+|---|---|---|---|
+| `exit-on-receive` | After the delivery-cap check, before any processing: the process exits (code 70) without ack or nak | unlimited | Stream Worker, AI Worker |
+| `crash-before-ack` | Processes normally (outputs, KV, result event with PubAck), then the process exits (code 70) instead of acking | 1 | Stream Worker, AI Worker |
+| `fail-transient` | Before any side effect: handled as a transient error (NAK and the 5-attempt rule in 2.2) | unlimited | Stream Worker, AI Worker |
+
+The delivery-cap check (2.2) always runs before a fault, so `exit-on-receive` gives
+exactly 5 crashed deliveries and a dead letter on the 6th (Feature 4 "crash loop");
+`crash-before-ack` gives "processed but not acked" (Feature 5), and delivery 2 is
+processed and acked normally. Workers never copy `Fp-Test-Fault` onto result events,
+and `fpctl dlq redrive` strips it. Details: `docs/architecture-review.md` B1
+"Test-only fault hooks".
 
 ---
 
@@ -348,9 +399,18 @@ environment.
   (+ NACK), MinIO, Qdrant, KEDA and all FramePulse services. In CI the runner is an
   in-cluster Job; developers may run it from the host via `kubectl port-forward`.
 - Fault-injection steps (e.g. "Qdrant is unavailable") scale the workload to zero with
-  `kubectl` and restore it afterwards.
-- "Then" steps wait on result events through an ordered consumer filtered by
-  `video_id`, never on fixed sleeps.
+  `kubectl` and restore it afterwards. Crash and no-ack steps (Feature 4 "crash loop",
+  Feature 5 "processed but not acked") use the test-only fault hooks (2.5), which only
+  the kind cluster enables.
+- "Then" steps wait on result events through ordered consumers filtered by
+  `video_id`, never on fixed sleeps. NATS `*` matches exactly one token, so one video
+  needs four filter subjects on two streams: `video.chunks.*.{video_id}` (uploaded),
+  `video.chunks.*.*.{video_id}` (hls.ready, ai.indexed) and
+  `video.lifecycle.*.{video_id}` on `VIDEO_EVENTS`, plus `dlq.*.{video_id}` on
+  `VIDEO_DLQ` (dead letters with an undecodable payload go to `dlq.{consumer}.unknown`
+  and cannot be matched per video).
+- Idle-timeout scenarios rely on the kind values `FINALIZE_IDLE_TIMEOUT=10s` and
+  `FINALIZE_SWEEP_INTERVAL=2s` (2.2); production defaults are 5 min and 30 s.
 - Latency scenarios are tagged `@load` and run only in dedicated load runs, not single
   events or per-PR jobs.
 
@@ -437,9 +497,9 @@ Feature: Video finalization
     And GET "/api/v1/videos/V/hls/src/playlist.m3u8" returns 200
 
   Scenario: An abandoned upload is force-finalized after the idle timeout
-    Given the Stream Worker runs with FINALIZE_IDLE_TIMEOUT "5m"
+    Given the Stream Worker runs with FINALIZE_IDLE_TIMEOUT "10s"
     And chunks 0, 1 and 3 of video "V" are READY and no "VideoIngestCompleted" has been published
-    When no event for video "V" arrives for 5 minutes
+    When no event for video "V" arrives for 10 seconds
     Then the video is finalized with finalize_reason IDLE_TIMEOUT
     And the static playlist lists "000000.ts", "000001.ts" and "000003.ts" with "#EXT-X-DISCONTINUITY" before "000003.ts"
     And the playlist ends with "#EXT-X-ENDLIST"
@@ -500,15 +560,16 @@ Feature: Failure handling on both paths
   Scenario: AI Worker failure is retried, then dead-lettered, without affecting the hot path
     Given Qdrant is unavailable
     When a "VideoChunkUploaded" event for chunk 7 of video "V" is published
-    Then the AI Worker NAKs it with increasing backoff delays
-    And after the 5th delivery publishes a "DeadLetter" on "dlq.ai-indexer.V" with "ERROR_CLASS_RETRIES_EXHAUSTED"
+    Then the AI Worker NAKs deliveries 1 to 4 with increasing backoff delays
+    And when delivery 5 also fails it publishes a "DeadLetter" on "dlq.ai-indexer.V" with "ERROR_CLASS_RETRIES_EXHAUSTED" and delivery_count 5
+    And terminates the message without a 6th delivery
     And the dead letter contains the original subject, headers and payload verbatim
     And the Stream Worker still produces "ChunkHlsReady" for chunk 7
 
   Scenario: Crash loop is broken by the delivery cap
     Given a message that makes the AI Worker process exit before acking
-    When it has been delivered more than 5 times
-    Then the next worker to receive it sends it to the DLQ before processing and terminates it
+    When it has been delivered 5 times and the worker exited each time
+    Then the worker that receives the 6th delivery sends it to the DLQ before processing, with delivery_count 6, and terminates it
 
   Scenario: Redriving dead letters after recovery
     Given dead letters from consumer "ai-indexer" exist and Qdrant is available again
@@ -625,11 +686,14 @@ change the contracts in `docs/architecture-review.md`.
 | A10 | Test environment | Kubernetes-only: acceptance/BDD (godog) on a local `kind` cluster, locally and in CI, with the production Helm chart and `values-kind.yaml`; unit tests without infrastructure; no compose/testcontainers | Decided 2026-10-11 (Helm and godog chosen by architect) | — |
 | A11 | Renditions | Single rendition `src` (no ABR ladder) | Default | Mobile/low-bandwidth playback is required (Future Work 3) |
 | A12 | Source codecs | Producer requires H.264 + AAC input and rejects other codecs | Default | Other sources must be supported (add transcode-at-ingest) |
-| A13 | Session length | One `video_id` per recording session of at most 24 h | Default | Continuous 24/7 camera streams |
+| A13 | Video length cap | A video is at most **4 h** of media and at most **8,000 chunks** (seq 0–7999). This keeps the `HlsIndex` value ≤ ~152 KB (≤ 19 B per segment without `Segment.key`), 6.9× below the 1 MiB KV `max_value_size` and NATS `max_payload`. The Producer rejects longer files before any upload; a camera session publishes `VideoIngestCompleted` and rolls over to a new `video_id` (media time restarts at 0) before a chunk would exceed either limit. Workers dead-letter `chunk_seq` ≥ 8,000 or `chunk_count` > 8,000 as `ERROR_CLASS_SCHEMA` | Decided 2026-10-11 (replaces the former 24 h session default) | Longer single videos are needed (Future Work 9: index sharding) |
 | A14 | Search granularity | One Qdrant point per chunk, merged at query time | Default | Search quality on short chunks is insufficient (Future Work 4) |
-| A15 | Abandoned uploads | Force-finalize after 5 min with no activity (`FINALIZE_IDLE_TIMEOUT`, configurable); missing chunks treated as FAILED; late events don't reopen a video | Decided 2026-10-11 | Camera feeds pause longer than the timeout (raise it per deployment) |
+| A15 | Abandoned uploads | Force-finalize after 5 min with no activity (`FINALIZE_IDLE_TIMEOUT`, configurable; the kind test cluster uses 10 s with a 2 s sweep); missing chunks treated as FAILED; late events don't reopen a video | Decided 2026-10-11 | Camera feeds pause longer than the timeout (raise it per deployment) |
 | A16 | Search results for unfinished videos | Shown, with `status` = `processing` / `ready` / `failed` | Decided 2026-10-11 | — |
 | A17 | Language detection | Per chunk in the MVP (may flip on 2 s clips); per-video pinning is Future Work 5 | Decided 2026-10-11 | Japanese/Chinese content is added |
+| A18 | Qdrant point-ID namespace | UUIDv5 namespace `c1907ffe-0c06-4077-8866-08fb8d658b77`, name `{video_id}:{seq6}`; fixed forever | Decided 2026-10-11 | Never (changing it means a full re-index) |
+| A19 | Retry cap | At most 5 processing attempts; a transient failure on attempt 5 dead-letters immediately (`RETRIES_EXHAUSTED`); a delivery with `num_delivered` ≥ 6 is dead-lettered on receipt | Decided 2026-10-11 | — |
+| A20 | Test fault hooks | `Fp-Test-Fault` header honored only when the worker runs with `FP_TEST_FAULTS=1`, set only by `values-kind.yaml` (2.5) | Decided 2026-10-11 | — |
 
 ---
 
@@ -659,6 +723,12 @@ Not in the MVP. Listed in rough priority order; each needs its own design review
 8. **Manual finalize command.** The MVP force-finalizes abandoned uploads after an idle
    timeout (A15). An operator command (`fpctl video finalize --force`) could finalize a
    video on demand without waiting.
+9. **Index sharding for longer videos.** Lift the 4 h / 8,000-chunk cap (A13) by
+   splitting a video's `HLS_INDEX` entry into blocks (e.g. keys
+   `{video_id}.{rendition}.{block}` plus a small head key holding
+   `expected_chunk_count`, `finalized` and the block count), so each CAS rewrites one
+   block instead of the whole index. Needs finalization and playlist rendering over
+   blocks; the 6-digit `seq6` format must be revisited above 999,999 chunks.
 
 ---
 
