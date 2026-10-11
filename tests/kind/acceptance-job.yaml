@@ -1,0 +1,61 @@
+# In-cluster acceptance run. Applied by tests/kind/run-job.sh, which substitutes
+# __JOB_NAME__, __IMAGE__, __GODOG_TAGS__ and __GODOG_STRICT__.
+#
+# TODO(chart): service names, ports and the MinIO secret below are placeholders until
+# deploy/helm/framepulse exists; align them with values-kind.yaml.
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: __JOB_NAME__
+  namespace: framepulse
+  labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
+spec:
+  backoffLimit: 0                 # a failed run is a result, never retried
+  activeDeadlineSeconds: 5400     # idle-timeout scenarios take > 5 min each
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
+    spec:
+      serviceAccountName: fp-acceptance
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 120   # let AfterSuite restore scaled-down workloads
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: acceptance
+          image: __IMAGE__
+          imagePullPolicy: IfNotPresent   # image is side-loaded with `kind load docker-image`
+          args: ["-test.run", "^TestFeatures$", "-test.v", "-test.timeout", "85m"]
+          env:
+            - {name: GODOG_TAGS, value: "__GODOG_TAGS__"}
+            - {name: GODOG_STRICT, value: "__GODOG_STRICT__"}
+            - {name: GODOG_FORMAT, value: "pretty,junit:/reports/junit.xml"}
+            - {name: NO_COLOR, value: "1"}
+            - {name: FP_KUBE_NAMESPACE, valueFrom: {fieldRef: {fieldPath: metadata.namespace}}}
+            - {name: FP_NATS_URL, value: "nats://framepulse-nats:4222"}
+            - {name: FP_MINIO_ENDPOINT, value: "framepulse-minio:9000"}
+            # Must equal the Serving API's MINIO_PUBLIC_ENDPOINT (presigned URL host check).
+            - {name: FP_MINIO_PUBLIC_ENDPOINT, value: "http://localhost:9000"}
+            - {name: FP_MINIO_ACCESS_KEY, valueFrom: {secretKeyRef: {name: framepulse-minio, key: rootUser}}}
+            - {name: FP_MINIO_SECRET_KEY, valueFrom: {secretKeyRef: {name: framepulse-minio, key: rootPassword}}}
+            - {name: FP_QDRANT_URL, value: "http://framepulse-qdrant:6333"}
+            - {name: FP_API_BASE_URL, value: "http://framepulse-serving-api:8080"}
+            - {name: FP_FIXTURES_DIR, value: "/fixtures"}
+            # - {name: FP_POINT_ID_NAMESPACE, value: "<from contracts/testdata/keys.json>"}
+          resources:
+            requests: {cpu: 250m, memory: 256Mi}
+            limits: {cpu: "1", memory: 1Gi}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          volumeMounts:
+            - {name: tmp, mountPath: /tmp}
+            - {name: reports, mountPath: /reports}
+      volumes:
+        - {name: tmp, emptyDir: {sizeLimit: 512Mi}}
+        - {name: reports, emptyDir: {sizeLimit: 64Mi}}

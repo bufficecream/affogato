@@ -1,0 +1,50 @@
+# ServiceAccount + namespaced Role for the acceptance runner Job.
+# Least privilege: read workloads/pods and scale Deployments/StatefulSets (fault injection),
+# pause KEDA ScaledObjects - in namespace "framepulse" only. No ClusterRole, no secrets
+# access, no exec, no delete.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: fp-acceptance
+  namespace: framepulse
+  labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
+automountServiceAccountToken: true
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: fp-acceptance
+  namespace: framepulse
+  labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
+rules:
+  # Read workloads (replica counts, env such as WHISPER_MODEL / FINALIZE_IDLE_TIMEOUT, rollout status).
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets", "replicasets"]
+    verbs: ["get", "list", "watch"]
+  # Fault injection: kubectl scale --replicas=N.
+  - apiGroups: ["apps"]
+    resources: ["deployments/scale", "statefulsets/scale"]
+    verbs: ["get", "update", "patch"]
+  # Readiness waits, restart counts, pod IPs for /metrics scraping.
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  # Keep KEDA from undoing a scale-to-zero: annotate autoscaling.keda.sh/paused-replicas.
+  - apiGroups: ["keda.sh"]
+    resources: ["scaledobjects"]
+    verbs: ["get", "list", "patch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: fp-acceptance
+  namespace: framepulse
+  labels: {app.kubernetes.io/name: fp-acceptance, app.kubernetes.io/part-of: framepulse-tests}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: fp-acceptance
+subjects:
+  - kind: ServiceAccount
+    name: fp-acceptance
+    namespace: framepulse

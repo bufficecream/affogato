@@ -1,0 +1,18 @@
+# Local / CI kind cluster for FramePulse acceptance tests (spec A10, review decision 16).
+#   kind create cluster --config tests/kind/kind-config.yaml
+# The production Helm chart (deploy/helm/framepulse, values-kind.yaml) is installed into
+# namespace "framepulse" afterwards; the acceptance runner Job runs in the same namespace.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: framepulse
+# Pin the node image in CI for reproducibility, e.g. via `make kind-up KIND_NODE_IMAGE=kindest/node:vX.Y.Z@sha256:…`
+# (the Makefile passes --image when KIND_NODE_IMAGE is set).
+nodes:
+  - role: control-plane
+  # One worker so that a scale-to-zero of Qdrant or a worker never evicts the control plane,
+  # and so "different replicas" scenarios can spread stream-worker pods.
+  - role: worker
+  - role: worker
+networking:
+  # Port-forwarding is used instead of host port mappings (tests/kind/port-forward.sh).
+  apiServerAddress: "127.0.0.1"
