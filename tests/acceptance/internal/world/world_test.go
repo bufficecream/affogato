@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 func TestVideoAliasesAreStableUUIDv7(t *testing.T) {
@@ -47,7 +47,7 @@ func TestExpand(t *testing.T) {
 	v := w.mustVideo(t, "V")
 	wid := w.mustVideo(t, "W")
 	cases := map[string]string{
-		"fp-raw/videos/V/chunks/000000.ts":       "fp-raw/videos/" + v + "/chunks/000000.ts",
+		"af-raw/videos/V/chunks/000000.ts":       "af-raw/videos/" + v + "/chunks/000000.ts",
 		"video.chunks.uploaded.V":                "video.chunks.uploaded." + v,
 		"dlq.hls-stream-worker.V":                "dlq.hls-stream-worker." + v,
 		"V.src":                                  v + ".src",

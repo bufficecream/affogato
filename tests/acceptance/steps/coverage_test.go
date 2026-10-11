@@ -17,9 +17,9 @@ import (
 	"github.com/cucumber/godog"
 	messages "github.com/cucumber/messages/go/v34"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/config"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/payload"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/world"
+	"github.com/affogato/affogato/tests/acceptance/internal/config"
+	"github.com/affogato/affogato/tests/acceptance/internal/payload"
+	"github.com/affogato/affogato/tests/acceptance/internal/world"
 )
 
 const featuresDir = "../features"
@@ -193,7 +193,7 @@ func invoke(ctx context.Context, d *recorded, st *messages.PickleStep) error {
 // TestFeaturesMatchSpec enforces that feature files are verbatim copies of the spec's
 // Gherkin blocks, with only the leading comment and tag lines added.
 func TestFeaturesMatchSpec(t *testing.T) {
-	spec, err := os.ReadFile("../../../framepulse_spec.md")
+	spec, err := os.ReadFile("../../../affogato_spec.md")
 	if err != nil {
 		t.Skipf("spec not available (e.g. inside the runner image): %v", err)
 	}
@@ -248,7 +248,7 @@ func TestArgHelpers(t *testing.T) {
 	if _, err := apiPathArg(ctx, "http://evil/api/v1"); err == nil {
 		t.Error("absolute URL accepted as API path")
 	}
-	if _, err := objectArg(ctx, "fp-media/videos/V/../../x"); err == nil {
+	if _, err := objectArg(ctx, "af-media/videos/V/../../x"); err == nil {
 		t.Error("traversal accepted")
 	}
 }

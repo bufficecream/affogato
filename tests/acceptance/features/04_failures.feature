@@ -1,4 +1,4 @@
-# Copied verbatim from framepulse_spec.md section 4 (only the feature tag line is added).
+# Copied verbatim from affogato_spec.md section 4 (only the feature tag line is added).
 # Do not edit here: change the spec, then re-copy. TestFeaturesMatchSpec enforces this.
 @failures
 Feature: Failure handling on both paths
@@ -22,6 +22,6 @@ Feature: Failure handling on both paths
 
   Scenario: Redriving dead letters after recovery
     Given dead letters from consumer "ai-indexer" exist and Qdrant is available again
-    When the operator runs "fpctl dlq redrive --consumer ai-indexer --since 1h"
+    When the operator runs "afctl dlq redrive --consumer ai-indexer --since 1h"
     Then the original payloads are republished to their original subjects
     And each affected chunk is eventually indexed exactly once

@@ -116,12 +116,12 @@ func TestMsgIDs(t *testing.T) {
 
 func TestObjectKeys(t *testing.T) {
 	cases := []struct{ got, want string }{
-		{RawChunk(vid, 42).String(), "fp-raw/videos/" + vid + "/chunks/000042.ts"},
-		{HlsSegment(vid, "src", 42).String(), "fp-media/videos/" + vid + "/hls/src/000042.ts"},
-		{Thumbnail(vid, 42).String(), "fp-media/videos/" + vid + "/thumbs/000042.jpg"},
-		{Transcript(vid, 42).String(), "fp-media/videos/" + vid + "/transcripts/000042.json"},
-		{MediaPlaylist(vid, "src").String(), "fp-media/videos/" + vid + "/hls/src/playlist.m3u8"},
-		{MasterPlaylist(vid).String(), "fp-media/videos/" + vid + "/hls/master.m3u8"},
+		{RawChunk(vid, 42).String(), "af-raw/videos/" + vid + "/chunks/000042.ts"},
+		{HlsSegment(vid, "src", 42).String(), "af-media/videos/" + vid + "/hls/src/000042.ts"},
+		{Thumbnail(vid, 42).String(), "af-media/videos/" + vid + "/thumbs/000042.jpg"},
+		{Transcript(vid, 42).String(), "af-media/videos/" + vid + "/transcripts/000042.json"},
+		{MediaPlaylist(vid, "src").String(), "af-media/videos/" + vid + "/hls/src/playlist.m3u8"},
+		{MasterPlaylist(vid).String(), "af-media/videos/" + vid + "/hls/master.m3u8"},
 		{ThumbnailKeyPayload(vid, 42), "videos/" + vid + "/thumbs/000042.jpg"},
 		{HlsIndexKey(vid, "src"), vid + ".src"},
 	}
@@ -133,19 +133,19 @@ func TestObjectKeys(t *testing.T) {
 }
 
 func TestParseObject(t *testing.T) {
-	o, err := ParseObject("fp-raw/videos/" + vid + "/chunks/000000.ts")
+	o, err := ParseObject("af-raw/videos/" + vid + "/chunks/000000.ts")
 	if err != nil || o != RawChunk(vid, 0) {
 		t.Fatalf("ParseObject = %+v, %v", o, err)
 	}
 	for _, bad := range []string{
-		"fp-raw",
-		"fp-raw/",
+		"af-raw",
+		"af-raw/",
 		"other-bucket/videos/x",
-		"fp-media/videos/../../etc/passwd",
-		"fp-media//videos/x",
-		"fp-media/videos//x",
-		"fp-media/videos/./x",
-		`fp-media/videos\..\x`,
+		"af-media/videos/../../etc/passwd",
+		"af-media//videos/x",
+		"af-media/videos//x",
+		"af-media/videos/./x",
+		`af-media/videos\..\x`,
 	} {
 		if _, err := ParseObject(bad); err == nil {
 			t.Errorf("ParseObject(%q) accepted", bad)

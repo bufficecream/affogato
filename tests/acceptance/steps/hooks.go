@@ -11,7 +11,7 @@ import (
 
 	"github.com/cucumber/godog"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/world"
+	"github.com/affogato/affogato/tests/acceptance/internal/world"
 )
 
 // Tracker counts step outcomes godog does not fail on in non-strict mode. Undefined and

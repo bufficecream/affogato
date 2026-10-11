@@ -24,23 +24,23 @@ func (s *scriptedKubectl) Run(_ context.Context, args ...string) ([]byte, error)
 	return nil, nil
 }
 
-const deployJSON = `{"spec":{"selector":{"matchLabels":{"app.kubernetes.io/name":"stream-worker","app.kubernetes.io/instance":"framepulse"}},
+const deployJSON = `{"spec":{"selector":{"matchLabels":{"app.kubernetes.io/name":"stream-worker","app.kubernetes.io/instance":"affogato"}},
  "template":{"spec":{"containers":[{"name":"worker","env":[
    {"name":"FINALIZE_IDLE_TIMEOUT","value":"10s"},
    {"name":"FINALIZE_SWEEP_INTERVAL","value":"2s"},
-   {"name":"FP_TEST_FAULTS","value":"1"},
+   {"name":"AF_TEST_FAULTS","value":"1"},
    {"name":"MINIO_SECRET","valueFrom":{"secretKeyRef":{"name":"m","key":"k"}}}]}]}}}}`
 
 func TestDeploymentEnv(t *testing.T) {
-	k := &scriptedKubectl{out: map[string]string{"get deployment/framepulse-stream-worker -o json": deployJSON}}
-	inj, _ := NewInjector(k, "framepulse", time.Minute)
-	w := Workload{"deployment", "framepulse-stream-worker"}
+	k := &scriptedKubectl{out: map[string]string{"get deployment/affogato-stream-worker -o json": deployJSON}}
+	inj, _ := NewInjector(k, "affogato", time.Minute)
+	w := Workload{"deployment", "affogato-stream-worker"}
 	ctx := context.Background()
 	if v, err := inj.DeploymentEnv(ctx, w, "FINALIZE_IDLE_TIMEOUT"); err != nil || v != "10s" {
 		t.Errorf("FINALIZE_IDLE_TIMEOUT = %q, %v", v, err)
 	}
-	if v, err := inj.DeploymentEnv(ctx, w, "FP_TEST_FAULTS"); err != nil || v != "1" {
-		t.Errorf("FP_TEST_FAULTS = %q, %v", v, err)
+	if v, err := inj.DeploymentEnv(ctx, w, "AF_TEST_FAULTS"); err != nil || v != "1" {
+		t.Errorf("AF_TEST_FAULTS = %q, %v", v, err)
 	}
 	if _, err := inj.DeploymentEnv(ctx, w, "MINIO_SECRET"); err == nil || !strings.Contains(err.Error(), "valueFrom") {
 		t.Errorf("valueFrom env: %v", err)
@@ -59,11 +59,11 @@ func TestPodRestarts(t *testing.T) {
 	 {"status":{"containerStatuses":[{"restartCount":2,"lastState":{"terminated":{"exitCode":70}}}]}},
 	 {"status":{"containerStatuses":[{"restartCount":0,"lastState":{}}]}}]}`
 	k := &scriptedKubectl{out: map[string]string{
-		"get deployment/framepulse-ai-worker -o json": deployJSON,
+		"get deployment/affogato-ai-worker -o json": deployJSON,
 		"get pods -l": pods,
 	}}
-	inj, _ := NewInjector(k, "framepulse", time.Minute)
-	r, err := inj.PodRestarts(context.Background(), Workload{"deployment", "framepulse-ai-worker"})
+	inj, _ := NewInjector(k, "affogato", time.Minute)
+	r, err := inj.PodRestarts(context.Background(), Workload{"deployment", "affogato-ai-worker"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestPodRestarts(t *testing.T) {
 		t.Errorf("restarts = %+v", r)
 	}
 	last := strings.Join(k.calls[len(k.calls)-1], " ")
-	if !strings.Contains(last, "-l app.kubernetes.io/instance=framepulse,app.kubernetes.io/name=stream-worker") {
+	if !strings.Contains(last, "-l app.kubernetes.io/instance=affogato,app.kubernetes.io/name=stream-worker") {
 		t.Errorf("selector not deterministic/sorted: %s", last)
 	}
 	if _, err := labelSelector(map[string]string{"a": "b,c"}); err == nil {
@@ -84,8 +84,8 @@ func TestPodRestarts(t *testing.T) {
 
 func TestVerifyHealthyOnRestore(t *testing.T) {
 	k := &scriptedKubectl{}
-	inj, _ := NewInjector(k, "framepulse", time.Minute)
-	inj.VerifyHealthyOnRestore(Workload{"deployment", "framepulse-ai-worker"})
+	inj, _ := NewInjector(k, "affogato", time.Minute)
+	inj.VerifyHealthyOnRestore(Workload{"deployment", "affogato-ai-worker"})
 	if p := inj.Pending(); len(p) != 1 || !strings.Contains(p[0], "healthy") {
 		t.Fatalf("pending = %v", p)
 	}
@@ -93,7 +93,7 @@ func TestVerifyHealthyOnRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := strings.Join(k.calls[0], " ")
-	if got != "--namespace framepulse rollout status deployment/framepulse-ai-worker --timeout=1m0s" {
+	if got != "--namespace affogato rollout status deployment/affogato-ai-worker --timeout=1m0s" {
 		t.Errorf("restore ran %q", got)
 	}
 }

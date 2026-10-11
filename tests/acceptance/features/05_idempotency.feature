@@ -1,4 +1,4 @@
-# Copied verbatim from framepulse_spec.md section 4 (only the feature tag line is added).
+# Copied verbatim from affogato_spec.md section 4 (only the feature tag line is added).
 # Do not edit here: change the spec, then re-copy. TestFeaturesMatchSpec enforces this.
 @idempotency
 Feature: Idempotent processing

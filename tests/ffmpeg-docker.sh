@@ -47,6 +47,6 @@ args=(--rm -i --user "$(id -u):$(id -g)" -e HOME=/tmp --entrypoint "$cmd" -w "$h
 for m in "${mounts[@]}"; do args+=(-v "$m:$m"); done
 # Pass through the knobs make_fixtures.sh / verify_fixtures.sh read.
 for v in SPEECH_SRC FIXTURES_STRICT_SPEECH; do [ -n "${!v:-}" ] && args+=(-e "$v"); done
-args+=(-e FP_IN_FFMPEG_CONTAINER=1)
+args+=(-e AF_IN_FFMPEG_CONTAINER=1)
 
 exec docker run "${args[@]}" "$FFMPEG_IMAGE" "$@"

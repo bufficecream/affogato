@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # Acceptance runner image (B4: tests/acceptance packaged as an image, run as a Job on kind).
 # Build from the repository root so gen/go can be added later via a go.mod `replace`:
-#   docker build -f tests/acceptance/Dockerfile -t framepulse/acceptance:dev .
+#   docker build -f tests/acceptance/Dockerfile -t affogato/acceptance:dev .
 
 ARG GO_VERSION=1.26
 ARG DEBIAN=bookworm
@@ -24,7 +24,7 @@ RUN --mount=type=cache,target=/go/pkg/mod --mount=type=cache,target=/root/.cache
 # make_fixtures.sh runs verify_fixtures.sh, so a bad fixture fails the build.
 FROM ${FFMPEG_IMAGE} AS fixtures
 COPY tests/fixtures/ /fixtures-src/
-RUN FP_IN_FFMPEG_CONTAINER=1 bash /fixtures-src/make_fixtures.sh /fixtures
+RUN AF_IN_FFMPEG_CONTAINER=1 bash /fixtures-src/make_fixtures.sh /fixtures
 
 # ---- kubectl (checksum-verified) for fault injection ----
 FROM debian:${DEBIAN}-slim AS kubectl
@@ -36,11 +36,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends curl ca-certifi
     && echo "$(curl -fsSL "https://dl.k8s.io/release/${KUBECTL_VERSION}/bin/linux/${arch}/kubectl.sha256")  /kubectl" | sha256sum -c - \
     && chmod 0755 /kubectl
 
-# TODO(developer): once the images exist, copy the Producer CLI and fpctl into the runner:
-# FROM framepulse/producer:dev AS producer
-# FROM framepulse/fpctl:dev AS fpctl
-# ...and below:  COPY --from=producer /fp-producer /usr/local/bin/fp-producer
-#                COPY --from=fpctl /fpctl /usr/local/bin/fpctl
+# TODO(developer): once the images exist, copy the Producer CLI and afctl into the runner:
+# FROM affogato/producer:dev AS producer
+# FROM affogato/afctl:dev AS afctl
+# ...and below:  COPY --from=producer /af-producer /usr/local/bin/af-producer
+#                COPY --from=afctl /afctl /usr/local/bin/afctl
 
 # ---- runtime ----
 # The pinned ffmpeg image already has ffprobe (remux verification, Feature 1) and CA
@@ -51,7 +51,7 @@ COPY --from=fixtures /fixtures /fixtures
 COPY --from=build /out/acceptance.test /acceptance/acceptance.test
 COPY tests/acceptance/features /acceptance/features
 WORKDIR /acceptance
-ENV FP_FIXTURES_DIR=/fixtures NO_COLOR=1 GODOG_TAGS=~@load
+ENV AF_FIXTURES_DIR=/fixtures NO_COLOR=1 GODOG_TAGS=~@load
 USER 65532:65532
 ENTRYPOINT ["/acceptance/acceptance.test"]
 CMD ["-test.run", "^TestFeatures$", "-test.v"]

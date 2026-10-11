@@ -1,5 +1,5 @@
 // Package metrics reads counters from Prometheus text exposition, e.g. the Stream Worker's
-// fp_late_chunks_total. The scenario sums the value over all replicas before and after.
+// af_late_chunks_total. The scenario sums the value over all replicas before and after.
 package metrics
 
 import (

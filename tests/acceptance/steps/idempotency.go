@@ -3,7 +3,7 @@ package steps
 import (
 	"context"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 const fIdem = "F5 idempotency"
@@ -56,7 +56,7 @@ func registerIdempotency(r Registrar) {
 				return err
 			}
 			// TODO (spec 2.5 fault hook; default n = 1, so delivery 2 is processed and acked):
-			//  1. require FP_TEST_FAULTS=1 on the worker (inj.DeploymentEnv) and register
+			//  1. require AF_TEST_FAULTS=1 on the worker (inj.DeploymentEnv) and register
 			//     inj.VerifyHealthyOnRestore(worker) + PodRestarts snapshot;
 			//  2. upload the chunk, PublishWithFault(uploaded:V:seq6, fv) and keep the PubAck
 			//     stream seq;

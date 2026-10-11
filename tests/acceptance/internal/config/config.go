@@ -16,46 +16,46 @@ import (
 
 // Config is the full runner configuration. Secret fields are never printed by String().
 type Config struct {
-	NATSURL   string // FP_NATS_URL
-	NATSCreds string // FP_NATS_CREDS (path to .creds file; optional, secret)
+	NATSURL   string // AF_NATS_URL
+	NATSCreds string // AF_NATS_CREDS (path to .creds file; optional, secret)
 
-	MinIOEndpoint       string // FP_MINIO_ENDPOINT host:port the runner uses
-	MinIOPublicEndpoint string // FP_MINIO_PUBLIC_ENDPOINT URL presigned links must point at
-	MinIOAccessKey      string // FP_MINIO_ACCESS_KEY (secret)
-	MinIOSecretKey      string // FP_MINIO_SECRET_KEY (secret)
-	MinIOUseTLS         bool   // FP_MINIO_USE_TLS
-	MinIORegion         string // FP_MINIO_REGION
+	MinIOEndpoint       string // AF_MINIO_ENDPOINT host:port the runner uses
+	MinIOPublicEndpoint string // AF_MINIO_PUBLIC_ENDPOINT URL presigned links must point at
+	MinIOAccessKey      string // AF_MINIO_ACCESS_KEY (secret)
+	MinIOSecretKey      string // AF_MINIO_SECRET_KEY (secret)
+	MinIOUseTLS         bool   // AF_MINIO_USE_TLS
+	MinIORegion         string // AF_MINIO_REGION
 
-	QdrantURL    string // FP_QDRANT_URL (REST, e.g. http://localhost:6333)
-	QdrantAPIKey string // FP_QDRANT_API_KEY (secret, optional)
+	QdrantURL    string // AF_QDRANT_URL (REST, e.g. http://localhost:6333)
+	QdrantAPIKey string // AF_QDRANT_API_KEY (secret, optional)
 
-	APIBaseURL string // FP_API_BASE_URL
+	APIBaseURL string // AF_API_BASE_URL
 
-	KubeNamespace string // FP_KUBE_NAMESPACE
-	KubeContext   string // FP_KUBE_CONTEXT (optional; empty = current / in-cluster)
-	Kubectl       string // FP_KUBECTL binary
+	KubeNamespace string // AF_KUBE_NAMESPACE
+	KubeContext   string // AF_KUBE_CONTEXT (optional; empty = current / in-cluster)
+	Kubectl       string // AF_KUBECTL binary
 
 	// Workload references for fault injection, "kind/name" (TODO: align with the Helm chart).
-	WorkloadStreamWorker string // FP_WORKLOAD_STREAM_WORKER
-	WorkloadAIWorker     string // FP_WORKLOAD_AI_WORKER
-	WorkloadEmbedder     string // FP_WORKLOAD_EMBEDDER
-	WorkloadQdrant       string // FP_WORKLOAD_QDRANT
-	WorkloadAPI          string // FP_WORKLOAD_API
+	WorkloadStreamWorker string // AF_WORKLOAD_STREAM_WORKER
+	WorkloadAIWorker     string // AF_WORKLOAD_AI_WORKER
+	WorkloadEmbedder     string // AF_WORKLOAD_EMBEDDER
+	WorkloadQdrant       string // AF_WORKLOAD_QDRANT
+	WorkloadAPI          string // AF_WORKLOAD_API
 
-	ProducerBin string // FP_PRODUCER_BIN (Producer CLI binary inside the runner image)
-	FpctlBin    string // FP_FPCTL_BIN
-	FfprobeBin  string // FP_FFPROBE_BIN (remux verification)
-	FixturesDir string // FP_FIXTURES_DIR
+	ProducerBin string // AF_PRODUCER_BIN (Producer CLI binary inside the runner image)
+	AfctlBin    string // AF_AFCTL_BIN
+	FfprobeBin  string // AF_FFPROBE_BIN (remux verification)
+	FixturesDir string // AF_FIXTURES_DIR
 
-	StreamWorkerMetricsPort int // FP_STREAM_WORKER_METRICS_PORT (TODO: align with chart)
+	StreamWorkerMetricsPort int // AF_STREAM_WORKER_METRICS_PORT (TODO: align with chart)
 
-	EventTimeout     time.Duration // FP_EVENT_TIMEOUT: hot-path "Then" waits
-	ColdPathTimeout  time.Duration // FP_COLD_PATH_TIMEOUT: STT + embedding waits
-	FinalizeTimeout  time.Duration // FP_FINALIZE_TIMEOUT: idle-timeout finalization waits
-	RetryTimeout     time.Duration // FP_RETRY_TIMEOUT: NAK/backoff/DLQ waits
-	RolloutTimeout   time.Duration // FP_ROLLOUT_TIMEOUT: kubectl scale / rollout waits
-	HTTPTimeout      time.Duration // FP_HTTP_TIMEOUT: per request
-	MaxResponseBytes int64         // FP_MAX_RESPONSE_BYTES: cap on bodies the runner buffers
+	EventTimeout     time.Duration // AF_EVENT_TIMEOUT: hot-path "Then" waits
+	ColdPathTimeout  time.Duration // AF_COLD_PATH_TIMEOUT: STT + embedding waits
+	FinalizeTimeout  time.Duration // AF_FINALIZE_TIMEOUT: idle-timeout finalization waits
+	RetryTimeout     time.Duration // AF_RETRY_TIMEOUT: NAK/backoff/DLQ waits
+	RolloutTimeout   time.Duration // AF_ROLLOUT_TIMEOUT: kubectl scale / rollout waits
+	HTTPTimeout      time.Duration // AF_HTTP_TIMEOUT: per request
+	MaxResponseBytes int64         // AF_MAX_RESPONSE_BYTES: cap on bodies the runner buffers
 }
 
 // Load reads the environment. It returns all problems at once.
@@ -107,56 +107,56 @@ func load(getenv func(string) string) (*Config, error) {
 	}
 
 	c := &Config{
-		NATSURL:   str("FP_NATS_URL", "nats://127.0.0.1:4222"),
-		NATSCreds: str("FP_NATS_CREDS", ""),
+		NATSURL:   str("AF_NATS_URL", "nats://127.0.0.1:4222"),
+		NATSCreds: str("AF_NATS_CREDS", ""),
 
-		MinIOEndpoint:       str("FP_MINIO_ENDPOINT", "127.0.0.1:9000"),
-		MinIOPublicEndpoint: str("FP_MINIO_PUBLIC_ENDPOINT", "http://127.0.0.1:9000"),
-		MinIOAccessKey:      str("FP_MINIO_ACCESS_KEY", ""),
-		MinIOSecretKey:      str("FP_MINIO_SECRET_KEY", ""),
-		MinIOUseTLS:         boolean("FP_MINIO_USE_TLS", false),
-		MinIORegion:         str("FP_MINIO_REGION", "us-east-1"),
+		MinIOEndpoint:       str("AF_MINIO_ENDPOINT", "127.0.0.1:9000"),
+		MinIOPublicEndpoint: str("AF_MINIO_PUBLIC_ENDPOINT", "http://127.0.0.1:9000"),
+		MinIOAccessKey:      str("AF_MINIO_ACCESS_KEY", ""),
+		MinIOSecretKey:      str("AF_MINIO_SECRET_KEY", ""),
+		MinIOUseTLS:         boolean("AF_MINIO_USE_TLS", false),
+		MinIORegion:         str("AF_MINIO_REGION", "us-east-1"),
 
-		QdrantURL:    str("FP_QDRANT_URL", "http://127.0.0.1:6333"),
-		QdrantAPIKey: str("FP_QDRANT_API_KEY", ""),
+		QdrantURL:    str("AF_QDRANT_URL", "http://127.0.0.1:6333"),
+		QdrantAPIKey: str("AF_QDRANT_API_KEY", ""),
 
-		APIBaseURL: str("FP_API_BASE_URL", "http://127.0.0.1:8080"),
+		APIBaseURL: str("AF_API_BASE_URL", "http://127.0.0.1:8080"),
 
-		KubeNamespace: str("FP_KUBE_NAMESPACE", "framepulse"),
-		KubeContext:   str("FP_KUBE_CONTEXT", ""),
-		Kubectl:       str("FP_KUBECTL", "kubectl"),
+		KubeNamespace: str("AF_KUBE_NAMESPACE", "affogato"),
+		KubeContext:   str("AF_KUBE_CONTEXT", ""),
+		Kubectl:       str("AF_KUBECTL", "kubectl"),
 
-		WorkloadStreamWorker: str("FP_WORKLOAD_STREAM_WORKER", "deployment/framepulse-stream-worker"),
-		WorkloadAIWorker:     str("FP_WORKLOAD_AI_WORKER", "deployment/framepulse-ai-worker"),
-		WorkloadEmbedder:     str("FP_WORKLOAD_EMBEDDER", "deployment/framepulse-embedder"),
-		WorkloadQdrant:       str("FP_WORKLOAD_QDRANT", "statefulset/framepulse-qdrant"),
-		WorkloadAPI:          str("FP_WORKLOAD_API", "deployment/framepulse-serving-api"),
+		WorkloadStreamWorker: str("AF_WORKLOAD_STREAM_WORKER", "deployment/affogato-stream-worker"),
+		WorkloadAIWorker:     str("AF_WORKLOAD_AI_WORKER", "deployment/affogato-ai-worker"),
+		WorkloadEmbedder:     str("AF_WORKLOAD_EMBEDDER", "deployment/affogato-embedder"),
+		WorkloadQdrant:       str("AF_WORKLOAD_QDRANT", "statefulset/affogato-qdrant"),
+		WorkloadAPI:          str("AF_WORKLOAD_API", "deployment/affogato-serving-api"),
 
-		ProducerBin: str("FP_PRODUCER_BIN", "fp-producer"),
-		FpctlBin:    str("FP_FPCTL_BIN", "fpctl"),
-		FfprobeBin:  str("FP_FFPROBE_BIN", "ffprobe"),
-		FixturesDir: str("FP_FIXTURES_DIR", "../fixtures/media"),
+		ProducerBin: str("AF_PRODUCER_BIN", "af-producer"),
+		AfctlBin:    str("AF_AFCTL_BIN", "afctl"),
+		FfprobeBin:  str("AF_FFPROBE_BIN", "ffprobe"),
+		FixturesDir: str("AF_FIXTURES_DIR", "../fixtures/media"),
 
-		StreamWorkerMetricsPort: int(integer("FP_STREAM_WORKER_METRICS_PORT", 9090)),
+		StreamWorkerMetricsPort: int(integer("AF_STREAM_WORKER_METRICS_PORT", 9090)),
 
-		EventTimeout:    dur("FP_EVENT_TIMEOUT", 30*time.Second),
-		ColdPathTimeout: dur("FP_COLD_PATH_TIMEOUT", 2*time.Minute),
+		EventTimeout:    dur("AF_EVENT_TIMEOUT", 30*time.Second),
+		ColdPathTimeout: dur("AF_COLD_PATH_TIMEOUT", 2*time.Minute),
 		// kind: FINALIZE_IDLE_TIMEOUT=10s + FINALIZE_SWEEP_INTERVAL=2s (spec 2.2, A15) + margin.
-		// Against production defaults (5m/30s) set FP_FINALIZE_TIMEOUT=7m.
-		FinalizeTimeout: dur("FP_FINALIZE_TIMEOUT", 30*time.Second),
+		// Against production defaults (5m/30s) set AF_FINALIZE_TIMEOUT=7m.
+		FinalizeTimeout: dur("AF_FINALIZE_TIMEOUT", 30*time.Second),
 		// F4.1: AI backoff 2+10+30+60 s + processing (~2 min); F4.2 crash loop:
 		// 5 x (ack_wait 60 s + restart) ~ 6 min. One bound for both, with margin.
-		RetryTimeout:     dur("FP_RETRY_TIMEOUT", 8*time.Minute),
-		RolloutTimeout:   dur("FP_ROLLOUT_TIMEOUT", 3*time.Minute),
-		HTTPTimeout:      dur("FP_HTTP_TIMEOUT", 10*time.Second),
-		MaxResponseBytes: integer("FP_MAX_RESPONSE_BYTES", 8<<20),
+		RetryTimeout:     dur("AF_RETRY_TIMEOUT", 8*time.Minute),
+		RolloutTimeout:   dur("AF_ROLLOUT_TIMEOUT", 3*time.Minute),
+		HTTPTimeout:      dur("AF_HTTP_TIMEOUT", 10*time.Second),
+		MaxResponseBytes: integer("AF_MAX_RESPONSE_BYTES", 8<<20),
 	}
 
 	for key, raw := range map[string]string{
-		"FP_NATS_URL":              c.NATSURL,
-		"FP_MINIO_PUBLIC_ENDPOINT": c.MinIOPublicEndpoint,
-		"FP_QDRANT_URL":            c.QdrantURL,
-		"FP_API_BASE_URL":          c.APIBaseURL,
+		"AF_NATS_URL":              c.NATSURL,
+		"AF_MINIO_PUBLIC_ENDPOINT": c.MinIOPublicEndpoint,
+		"AF_QDRANT_URL":            c.QdrantURL,
+		"AF_API_BASE_URL":          c.APIBaseURL,
 	} {
 		u, err := url.Parse(raw)
 		if err != nil || u.Scheme == "" || u.Host == "" {
@@ -164,7 +164,7 @@ func load(getenv func(string) string) (*Config, error) {
 		}
 	}
 	if strings.Contains(c.MinIOEndpoint, "://") || strings.Contains(c.MinIOEndpoint, "/") {
-		errs = append(errs, fmt.Errorf("FP_MINIO_ENDPOINT=%q: want host:port without scheme or path", c.MinIOEndpoint))
+		errs = append(errs, fmt.Errorf("AF_MINIO_ENDPOINT=%q: want host:port without scheme or path", c.MinIOEndpoint))
 	}
 	return c, errors.Join(errs...)
 }

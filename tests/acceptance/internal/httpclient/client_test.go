@@ -16,7 +16,7 @@ func TestDoesNotFollowRedirects(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/api/v1/videos/x/thumbs/000000.jpg":
-			http.Redirect(w, r, "http://minio.example:9000/fp-media/videos/x/thumbs/000000.jpg?X-Amz-Expires=600", http.StatusFound)
+			http.Redirect(w, r, "http://minio.example:9000/af-media/videos/x/thumbs/000000.jpg?X-Amz-Expires=600", http.StatusFound)
 		case "/relative":
 			w.Header().Set("Location", "/target")
 			w.WriteHeader(http.StatusFound)
@@ -130,33 +130,33 @@ func TestCheckPresignedURL(t *testing.T) {
 	now := time.Date(2026, 10, 11, 12, 0, 0, 0, time.UTC)
 	chk := PresignCheck{
 		PublicEndpoint: "http://minio.localtest.me:9000",
-		Bucket:         "fp-media", Key: "videos/v/thumbs/000042.jpg",
+		Bucket:         "af-media", Key: "videos/v/thumbs/000042.jpg",
 		MaxTTL: 10 * time.Minute, Now: now, ClockSkew: 30 * time.Second,
 	}
-	good := presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now, "600")
+	good := presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now, "600")
 	if err := CheckPresignedURL(good, chk); err != nil {
 		t.Fatalf("valid URL rejected: %v", err)
 	}
 	bad := map[string]*url.URL{
-		"internal host":    presigned("framepulse-minio.framepulse.svc:9000", "/fp-media/videos/v/thumbs/000042.jpg", now, "600"),
-		"ttl too long":     presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now, "3600"),
-		"wrong object":     presigned("minio.localtest.me:9000", "/fp-media/videos/other/thumbs/000042.jpg", now, "600"),
-		"already expired":  presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now.Add(-time.Hour), "600"),
-		"signed in future": presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now.Add(time.Hour), "600"),
+		"internal host":    presigned("affogato-minio.affogato.svc:9000", "/af-media/videos/v/thumbs/000042.jpg", now, "600"),
+		"ttl too long":     presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now, "3600"),
+		"wrong object":     presigned("minio.localtest.me:9000", "/af-media/videos/other/thumbs/000042.jpg", now, "600"),
+		"already expired":  presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now.Add(-time.Hour), "600"),
+		"signed in future": presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now.Add(time.Hour), "600"),
 	}
 	for name, u := range bad {
 		if err := CheckPresignedURL(u, chk); err == nil {
 			t.Errorf("%s: accepted", name)
 		}
 	}
-	missing := presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now, "600")
+	missing := presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now, "600")
 	q := missing.Query()
 	q.Del("X-Amz-Signature")
 	missing.RawQuery = q.Encode()
 	if err := CheckPresignedURL(missing, chk); err == nil {
 		t.Error("unsigned URL accepted")
 	}
-	listing := presigned("minio.localtest.me:9000", "/fp-media/videos/v/thumbs/000042.jpg", now, "600")
+	listing := presigned("minio.localtest.me:9000", "/af-media/videos/v/thumbs/000042.jpg", now, "600")
 	q = listing.Query()
 	q.Set("list-type", "2")
 	listing.RawQuery = q.Encode()

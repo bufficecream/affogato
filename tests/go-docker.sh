@@ -6,6 +6,6 @@ set -euo pipefail
 root=$(cd "$(dirname "$0")/.." && pwd)
 rel=${PWD#"$root"}
 exec docker run --rm -i \
-  -v "$root:/repo" -v fp-gomod:/go/pkg/mod -v fp-gocache:/root/.cache/go-build \
+  -v "$root:/repo" -v af-gomod:/go/pkg/mod -v af-gocache:/root/.cache/go-build \
   -e NO_COLOR -e GODOG_TAGS -e GODOG_STRICT -e GODOG_FORMAT \
   -w "/repo$rel" "golang:${GO_VERSION:-1.26}-bookworm" go "$@"

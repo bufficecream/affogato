@@ -10,7 +10,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 // Waiter feeds one video's VIDEO_EVENTS and VIDEO_DLQ messages into a Log.
@@ -91,7 +91,7 @@ func Publish(ctx context.Context, js jetstream.JetStream, subject, msgID, schema
 	return PublishWithHeaders(ctx, js, subject, msgID, schema, data, nil)
 }
 
-// PublishWithFault publishes like Publish and adds one Fp-Test-Fault header (spec 2.5),
+// PublishWithFault publishes like Publish and adds one Af-Test-Fault header (spec 2.5),
 // e.g. contracts.TestFaultValue(contracts.FaultExitOnReceive, contracts.ConsumerAI, 0).
 // The value is validated with the same grammar the workers apply.
 func PublishWithFault(ctx context.Context, js jetstream.JetStream, subject, msgID, schema string, data []byte, faultValue string) (*jetstream.PubAck, error) {
@@ -108,7 +108,7 @@ var contractHeaders = map[string]bool{
 }
 
 // PublishWithHeaders publishes with the contract headers plus extra headers (for example
-// Fp-Test-Fault). Extra headers may not replace contract headers.
+// Af-Test-Fault). Extra headers may not replace contract headers.
 func PublishWithHeaders(ctx context.Context, js jetstream.JetStream, subject, msgID, schema string, data []byte, extra nats.Header) (*jetstream.PubAck, error) {
 	msg := &nats.Msg{Subject: subject, Data: data, Header: nats.Header{}}
 	for k, vs := range extra {

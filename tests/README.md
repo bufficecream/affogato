@@ -1,10 +1,10 @@
-# FramePulse test suite: how to run it
+# Affogato test suite: how to run it
 
-This directory holds the acceptance (BDD) suite for FramePulse and its supporting tooling:
+This directory holds the acceptance (BDD) suite for Affogato and its supporting tooling:
 
 | Path | What it is |
 |---|---|
-| `acceptance/` | Go module: godog runner (`main_test.go`), step definitions (`steps/`), helpers with unit tests (`internal/`), feature files (`features/`, copied verbatim from `framepulse_spec.md` section 4) |
+| `acceptance/` | Go module: godog runner (`main_test.go`), step definitions (`steps/`), helpers with unit tests (`internal/`), feature files (`features/`, copied verbatim from `affogato_spec.md` section 4) |
 | `fixtures/` | Media fixture generator (`make_fixtures.sh`), verifier (`verify_fixtures.sh`), speech clip drop folder (`speech/`) |
 | `kind/` | kind cluster config, the in-cluster runner Job + RBAC, host port-forward script |
 | `go-docker.sh` | Runs `go` in the `golang:1.26-bookworm` container |
@@ -13,7 +13,7 @@ This directory holds the acceptance (BDD) suite for FramePulse and its supportin
 
 Test strategy, traceability and open spec gaps: `docs/test-plan.md`.
 
-Status (2026-10-11, spec v3.1): no FramePulse service exists yet, so all 25 scenarios are
+Status (2026-10-11, spec v3.1): no Affogato service exists yet, so all 25 scenarios are
 **pending** (every step is defined and returns "pending" with a TODO). The commands
 marked "verified" below were run on macOS (arm64) with Docker only.
 
@@ -27,14 +27,14 @@ Optional:
 - ffmpeg/ffprobe with libx264: without them, fixtures are generated in a container
   automatically (section 4).
 - **kind** and **kubectl**: only for running the scenarios against a cluster (section 6).
-  Also needed: Helm and the FramePulse chart (`deploy/helm/framepulse`), which does not exist yet.
+  Also needed: Helm and the Affogato chart (`deploy/helm/affogato`), which does not exist yet.
 
 Run all commands from the repository root unless noted.
 
 ## 2. Go in a container (`go-docker.sh`)
 
 `tests/go-docker.sh` behaves like `go`. It mounts the repository at `/repo` and keeps
-the module and build caches in the Docker volumes `fp-gomod` and `fp-gocache`. It passes
+the module and build caches in the Docker volumes `af-gomod` and `af-gocache`. It passes
 through `NO_COLOR`, `GODOG_TAGS`, `GODOG_STRICT` and `GODOG_FORMAT`. Override the Go version
 with `GO_VERSION=1.26`.
 
@@ -57,18 +57,18 @@ The first run downloads the image and modules. Later runs take a few seconds.
 | `fixtures` | Generates the media fixtures into `tests/fixtures/media/` (git-ignored) and verifies them (section 4) | Docker or host ffmpeg | yes |
 | `fixtures-verify` | Re-runs only the fixture verifier | Docker or host ffmpeg | yes |
 | `manifests-lint` | Validates `tests/kind/*.yaml` with kubeconform (`ghcr.io/yannh/kubeconform:v0.6.7`, Kubernetes 1.33 schemas). The Job's placeholders are substituted first. The kind `Cluster` config has no schema and is reported as skipped. Downloads schemas, so it needs network but no cluster | Docker | yes |
-| `image` | Builds the runner image `framepulse/acceptance:dev` from `tests/acceptance/Dockerfile` (build context: repository root). The build runs vet and the unit tests, compiles the test binary, generates and verifies the fixtures with the pinned ffmpeg image, and adds kubectl v1.36.1 (checksum-verified). The image runs as uid 65532 | Docker | yes |
-| `kind-up` | Creates kind cluster `framepulse` (`KIND_NODE_IMAGE` pins the node image) and namespace `framepulse` | kind, kubectl | **no** |
+| `image` | Builds the runner image `affogato/acceptance:dev` from `tests/acceptance/Dockerfile` (build context: repository root). The build runs vet and the unit tests, compiles the test binary, generates and verifies the fixtures with the pinned ffmpeg image, and adds kubectl v1.36.1 (checksum-verified). The image runs as uid 65532 | Docker | yes |
+| `kind-up` | Creates kind cluster `affogato` (`KIND_NODE_IMAGE` pins the node image) and namespace `affogato` | kind, kubectl | **no** |
 | `kind-down` | Deletes the cluster | kind | **no** |
 | `kind-load` | `image`, then `kind load docker-image` | kind | **no** |
 | `acceptance` | `kind-load`, then runs the in-cluster Job (`kind/run-job.sh`) with tags `~@load`, streams logs, exits with the Job result | kind cluster + chart | **no** |
-| `load` | Same, only `@load` scenarios (Job `fp-acceptance-load`) | kind cluster + chart | **no** |
+| `load` | Same, only `@load` scenarios (Job `af-acceptance-load`) | kind cluster + chart | **no** |
 | `acceptance-host` | Runs godog from the host against port-forwarded services (`~@load`) | cluster + `kind/port-forward.sh` + Go | **no** |
 
 Makefile knobs: `GO` (default `go`), `FFMPEG`, `FFPROBE`, `FIXTURES_DOCKER` (0/1),
 `FIXTURES_DIR` (default `tests/fixtures/media`), `IMAGE` (default
-`framepulse/acceptance:dev`), `DOCKER`, `KIND`, `KUBECTL`, `KIND_CLUSTER`,
-`KIND_NODE_IMAGE`, `NAMESPACE` (default `framepulse`), `GODOG_STRICT` (default `false`),
+`affogato/acceptance:dev`), `DOCKER`, `KIND`, `KUBECTL`, `KIND_CLUSTER`,
+`KIND_NODE_IMAGE`, `NAMESPACE` (default `affogato`), `GODOG_STRICT` (default `false`),
 `KUBECONFORM_IMAGE`, `KUBE_SCHEMA_VERSION`.
 
 Expected `acceptance-dry` result today (verified):
@@ -192,16 +192,16 @@ back, keeping the two comment lines and the tag line at the top of each file.
 
 ## 6. Running against kind (UNVERIFIED: kind is not installed on the dev machine yet)
 
-None of these commands has been run. The FramePulse Helm chart does not exist yet. The
-service names, secret names and `FP_WORKLOAD_*` defaults in `kind/acceptance-job.yaml`,
+None of these commands has been run. The Affogato Helm chart does not exist yet. The
+service names, secret names and `AF_WORKLOAD_*` defaults in `kind/acceptance-job.yaml`,
 `kind/port-forward.sh` and `internal/config` are placeholders until it does.
 
 Intended flow:
 
 ```sh
-make -C tests kind-up                       # cluster "framepulse", namespace "framepulse"
-helm install framepulse deploy/helm/framepulse -n framepulse \
-  -f deploy/helm/framepulse/values-kind.yaml --wait
+make -C tests kind-up                       # cluster "affogato", namespace "affogato"
+helm install affogato deploy/helm/affogato -n affogato \
+  -f deploy/helm/affogato/values-kind.yaml --wait
 make -C tests acceptance                    # build + kind load image, run Job (~@load), ~35 min
 make -C tests load                          # @load scenarios only, separate Job
 make -C tests kind-down
@@ -211,49 +211,49 @@ make -C tests kind-down
 - Stream Worker `FINALIZE_IDLE_TIMEOUT=10s` and `FINALIZE_SWEEP_INTERVAL=2s` (spec 2.2/A15;
   production keeps 5m/30s). The Feature 2 idle scenario reads the env from the
   deployment and fails if it is not `10s`.
-- `testFaults.enabled: true`, which renders `FP_TEST_FAULTS=1` into the Stream Worker and
+- `testFaults.enabled: true`, which renders `AF_TEST_FAULTS=1` into the Stream Worker and
   AI Worker (spec 2.5). The Feature 4 crash loop and Feature 5 redelivery scenarios publish
-  events with the `Fp-Test-Fault` header and check that the env is `1`. Production values
+  events with the `Af-Test-Fault` header and check that the env is `1`. Production values
   must never set it.
-- `MINIO_PUBLIC_ENDPOINT` equal to the Job's `FP_MINIO_PUBLIC_ENDPOINT`.
+- `MINIO_PUBLIC_ENDPOINT` equal to the Job's `AF_MINIO_PUBLIC_ENDPOINT`.
 
 Job budget: `activeDeadlineSeconds: 3300`, `-test.timeout 50m`. The long scenarios are the
 AI crash loop (about 6 min), AI retry to DLQ (about 2 min of backoff) and redrive.
 
 Host run (also unverified): start `tests/kind/port-forward.sh` in one terminal, export
-`FP_MINIO_ACCESS_KEY`/`FP_MINIO_SECRET_KEY` from the MinIO secret, then
+`AF_MINIO_ACCESS_KEY`/`AF_MINIO_SECRET_KEY` from the MinIO secret, then
 `make -C tests acceptance-host`. It needs a local Go, or
 `GO="$PWD/tests/go-docker.sh"` with Docker networking that can reach the host's
-forwarded ports (on Docker Desktop: set `FP_*_URL` to `host.docker.internal`; untested).
+forwarded ports (on Docker Desktop: set `AF_*_URL` to `host.docker.internal`; untested).
 
-## 7. Runner configuration (`FP_*`)
+## 7. Runner configuration (`AF_*`)
 
 The defaults target the host + port-forward setup. The Job overrides them with in-cluster
 service names.
 
 | Variable | Default | Purpose |
 |---|---|---|
-| `FP_NATS_URL` | `nats://127.0.0.1:4222` | NATS |
-| `FP_NATS_CREDS` | unset | path to a `.creds` file (secret) |
-| `FP_MINIO_ENDPOINT` | `127.0.0.1:9000` | MinIO host:port used by the runner |
-| `FP_MINIO_PUBLIC_ENDPOINT` | `http://127.0.0.1:9000` | host that presigned URLs must point at |
-| `FP_MINIO_ACCESS_KEY` / `FP_MINIO_SECRET_KEY` | unset | MinIO credentials (secret, redacted in logs) |
-| `FP_MINIO_USE_TLS` / `FP_MINIO_REGION` | `false` / `us-east-1` | |
-| `FP_QDRANT_URL` / `FP_QDRANT_API_KEY` | `http://127.0.0.1:6333` / unset | Qdrant REST |
-| `FP_API_BASE_URL` | `http://127.0.0.1:8080` | Serving API |
-| `FP_KUBE_NAMESPACE` / `FP_KUBE_CONTEXT` / `FP_KUBECTL` | `framepulse` / current / `kubectl` | fault injection and inspection |
-| `FP_WORKLOAD_STREAM_WORKER` | `deployment/framepulse-stream-worker` | also read for `FINALIZE_IDLE_TIMEOUT` / `FP_TEST_FAULTS` |
-| `FP_WORKLOAD_AI_WORKER` | `deployment/framepulse-ai-worker` | crash-loop restarts, health check |
-| `FP_WORKLOAD_EMBEDDER` / `FP_WORKLOAD_QDRANT` / `FP_WORKLOAD_API` | `deployment/framepulse-embedder` / `statefulset/framepulse-qdrant` / `deployment/framepulse-serving-api` | |
-| `FP_PRODUCER_BIN` / `FP_FPCTL_BIN` / `FP_FFPROBE_BIN` | `fp-producer` / `fpctl` / `ffprobe` | binaries in the runner (Producer and fpctl not in the image yet: TODO stages in the Dockerfile) |
-| `FP_FIXTURES_DIR` | `../fixtures/media` (image: `/fixtures`) | fixtures |
-| `FP_STREAM_WORKER_METRICS_PORT` | `9090` | `/metrics` scraping |
-| `FP_EVENT_TIMEOUT` | `30s` | hot-path waits |
-| `FP_COLD_PATH_TIMEOUT` | `2m` | STT + embedding waits |
-| `FP_FINALIZE_TIMEOUT` | `30s` | idle finalization waits (kind 10 s + 2 s sweep). Set `7m` against production defaults |
-| `FP_RETRY_TIMEOUT` | `8m` | NAK/backoff/DLQ waits, incl. the ~6 min AI crash loop |
-| `FP_ROLLOUT_TIMEOUT` | `3m` | kubectl scale/rollout waits |
-| `FP_HTTP_TIMEOUT` / `FP_MAX_RESPONSE_BYTES` | `10s` / 8 MiB | per request / body cap |
+| `AF_NATS_URL` | `nats://127.0.0.1:4222` | NATS |
+| `AF_NATS_CREDS` | unset | path to a `.creds` file (secret) |
+| `AF_MINIO_ENDPOINT` | `127.0.0.1:9000` | MinIO host:port used by the runner |
+| `AF_MINIO_PUBLIC_ENDPOINT` | `http://127.0.0.1:9000` | host that presigned URLs must point at |
+| `AF_MINIO_ACCESS_KEY` / `AF_MINIO_SECRET_KEY` | unset | MinIO credentials (secret, redacted in logs) |
+| `AF_MINIO_USE_TLS` / `AF_MINIO_REGION` | `false` / `us-east-1` | |
+| `AF_QDRANT_URL` / `AF_QDRANT_API_KEY` | `http://127.0.0.1:6333` / unset | Qdrant REST |
+| `AF_API_BASE_URL` | `http://127.0.0.1:8080` | Serving API |
+| `AF_KUBE_NAMESPACE` / `AF_KUBE_CONTEXT` / `AF_KUBECTL` | `affogato` / current / `kubectl` | fault injection and inspection |
+| `AF_WORKLOAD_STREAM_WORKER` | `deployment/affogato-stream-worker` | also read for `FINALIZE_IDLE_TIMEOUT` / `AF_TEST_FAULTS` |
+| `AF_WORKLOAD_AI_WORKER` | `deployment/affogato-ai-worker` | crash-loop restarts, health check |
+| `AF_WORKLOAD_EMBEDDER` / `AF_WORKLOAD_QDRANT` / `AF_WORKLOAD_API` | `deployment/affogato-embedder` / `statefulset/affogato-qdrant` / `deployment/affogato-serving-api` | |
+| `AF_PRODUCER_BIN` / `AF_AFCTL_BIN` / `AF_FFPROBE_BIN` | `af-producer` / `afctl` / `ffprobe` | binaries in the runner (Producer and afctl not in the image yet: TODO stages in the Dockerfile) |
+| `AF_FIXTURES_DIR` | `../fixtures/media` (image: `/fixtures`) | fixtures |
+| `AF_STREAM_WORKER_METRICS_PORT` | `9090` | `/metrics` scraping |
+| `AF_EVENT_TIMEOUT` | `30s` | hot-path waits |
+| `AF_COLD_PATH_TIMEOUT` | `2m` | STT + embedding waits |
+| `AF_FINALIZE_TIMEOUT` | `30s` | idle finalization waits (kind 10 s + 2 s sweep). Set `7m` against production defaults |
+| `AF_RETRY_TIMEOUT` | `8m` | NAK/backoff/DLQ waits, incl. the ~6 min AI crash loop |
+| `AF_ROLLOUT_TIMEOUT` | `3m` | kubectl scale/rollout waits |
+| `AF_HTTP_TIMEOUT` / `AF_MAX_RESPONSE_BYTES` | `10s` / 8 MiB | per request / body cap |
 
 The Qdrant point-ID namespace is no longer configurable. It is the fixed
 `c1907ffe-0c06-4077-8866-08fb8d658b77` (spec A18), checked against the B3 golden IDs in
@@ -275,12 +275,12 @@ The Qdrant point-ID namespace is no longer configurable. It is the fixed
   absolute argument paths and `FFMPEG_DOCKER_MOUNTS` (space-separated dirs) are mounted.
 - **`make image` very slow at `apt-get`:** only the kubectl stage uses apt now. A slow
   Debian mirror shows up there; the layer is cached afterwards.
-- **`TestFeaturesMatchSpec` fails:** a feature file differs from `framepulse_spec.md`
+- **`TestFeaturesMatchSpec` fails:** a feature file differs from `affogato_spec.md`
   section 4. Re-copy the block; never edit the scenarios only in `features/`.
 - **`undefined step` / `ambiguous step`:** a spec step changed; adjust the regex in
   `acceptance/steps/*.go` (one definition per step text).
 - **Idle-finalization scenarios time out (cluster):** check that `values-kind.yaml` sets
-  `FINALIZE_IDLE_TIMEOUT=10s`. Against production values, set `FP_FINALIZE_TIMEOUT=7m`.
+  `FINALIZE_IDLE_TIMEOUT=10s`. Against production values, set `AF_FINALIZE_TIMEOUT=7m`.
 - **Crash-loop / redelivery scenarios fail at the start (cluster):** the worker
-  deployments do not have `FP_TEST_FAULTS=1` (`testFaults.enabled: true` missing).
+  deployments do not have `AF_TEST_FAULTS=1` (`testFaults.enabled: true` missing).
 - **Colours in logs:** set `NO_COLOR=1`.

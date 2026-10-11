@@ -4,7 +4,7 @@
 // acceptance criteria assert on. A Codec converts between views and wire bytes.
 //
 // TODO(contracts): once gen/go exists (B4), add a ProtoCodec in this package that
-// imports github.com/framepulse/framepulse/gen/go/framepulse/... (add a `replace`
+// imports github.com/affogato/affogato/gen/go/affogato/... (add a `replace`
 // directive in go.mod pointing at ../../gen/go), maps the generated messages to these
 // views, and becomes the Default. Until then every call returns ErrNotImplemented, and
 // steps that need it stay pending.
@@ -15,7 +15,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 // ErrNotImplemented is returned by PendingCodec. Steps map it to godog.ErrPending.
@@ -35,7 +35,7 @@ type ObjectRef struct {
 	SizeBytes                           int64
 }
 
-// VideoChunkUploaded (framepulse.events.v1.VideoChunkUploaded) - tests publish these directly
+// VideoChunkUploaded (affogato.events.v1.VideoChunkUploaded) - tests publish these directly
 // in scenarios that bypass the Producer CLI (out-of-order, corrupted chunk, duplicates).
 type VideoChunkUploaded struct {
 	EventID   string
@@ -109,7 +109,7 @@ const (
 	SegmentFailed
 )
 
-// Segment mirrors framepulse.state.v1.Segment. There is no key field: Segment.key was
+// Segment mirrors affogato.state.v1.Segment. There is no key field: Segment.key was
 // dropped (field 2 reserved, review decision 14); the segment key is derived from
 // chunk_seq with contracts.HlsSegment.
 type Segment struct {

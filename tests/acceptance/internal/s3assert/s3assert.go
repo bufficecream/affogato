@@ -16,7 +16,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/lifecycle"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 // ErrNotFound is returned when an object does not exist.

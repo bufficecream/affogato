@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 const fCold = "F3 cold-path"

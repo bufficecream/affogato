@@ -17,15 +17,15 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/config"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/events"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/fault"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/httpclient"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/latency"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/payload"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/qdrant"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/s3assert"
+	"github.com/affogato/affogato/tests/acceptance/internal/config"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/events"
+	"github.com/affogato/affogato/tests/acceptance/internal/fault"
+	"github.com/affogato/affogato/tests/acceptance/internal/httpclient"
+	"github.com/affogato/affogato/tests/acceptance/internal/latency"
+	"github.com/affogato/affogato/tests/acceptance/internal/payload"
+	"github.com/affogato/affogato/tests/acceptance/internal/qdrant"
+	"github.com/affogato/affogato/tests/acceptance/internal/s3assert"
 )
 
 // Suite holds state shared by all scenarios of one run.
@@ -195,7 +195,7 @@ func (w *World) JetStream() (jetstream.JetStream, error) {
 		return w.js, nil
 	}
 	cfg := w.Suite.Cfg
-	opts := []nats.Option{nats.Name("framepulse-acceptance/" + w.Name)}
+	opts := []nats.Option{nats.Name("affogato-acceptance/" + w.Name)}
 	if cfg.NATSCreds != "" {
 		opts = append(opts, nats.UserCredentials(cfg.NATSCreds))
 	}

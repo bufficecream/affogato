@@ -1,9 +1,9 @@
-// Package contracts holds test-side builders for the FramePulse wire contracts
+// Package contracts holds test-side builders for the Affogato wire contracts
 // (docs/architecture-review.md Part B): subjects, Nats-Msg-Id values, object keys,
 // HLS_INDEX keys, Serving API paths and Qdrant point IDs.
 //
 // These builders exist so acceptance tests can assert exact names without depending on
-// production code. Once libs/go/fpcontracts and contracts/testdata/keys.json exist,
+// production code. Once libs/go/afcontracts and contracts/testdata/keys.json exist,
 // contracts_test.go should additionally check these builders against keys.json
 // (B4 CI step 5) so the test side and the production side cannot drift apart.
 package contracts
@@ -23,7 +23,7 @@ import (
 const (
 	StreamEvents     = "VIDEO_EVENTS"
 	StreamDLQ        = "VIDEO_DLQ"
-	StreamAdvisories = "FP_ADVISORIES"
+	StreamAdvisories = "AF_ADVISORIES"
 	KVHlsIndex       = "HLS_INDEX"
 
 	ConsumerHls = "hls-stream-worker"
@@ -33,8 +33,8 @@ const (
 
 	RenditionSrc = "src"
 
-	BucketRaw   = "fp-raw"
-	BucketMedia = "fp-media"
+	BucketRaw   = "af-raw"
+	BucketMedia = "af-media"
 
 	QdrantAlias      = "transcripts"
 	QdrantCollection = "transcripts_me5s384_v1"
@@ -46,24 +46,24 @@ const (
 const (
 	HeaderMsgID       = "Nats-Msg-Id"
 	HeaderContentType = "Content-Type"
-	HeaderSchema      = "Fp-Schema"
-	HeaderProducer    = "Fp-Producer"
+	HeaderSchema      = "Af-Schema"
+	HeaderProducer    = "Af-Producer"
 	ContentTypeProto  = "application/protobuf"
 
 	// HeaderTestFault requests a test-only fault in a worker (spec 2.5, review B1
-	// "Test-only fault hooks"). Honored only when the worker runs with FP_TEST_FAULTS=1
+	// "Test-only fault hooks"). Honored only when the worker runs with AF_TEST_FAULTS=1
 	// (kind). Workers never copy it onto result events; DeadLetter.original_headers keeps
-	// it verbatim; fpctl dlq redrive strips it.
-	HeaderTestFault = "Fp-Test-Fault"
+	// it verbatim; afctl dlq redrive strips it.
+	HeaderTestFault = "Af-Test-Fault"
 )
 
-// Fully qualified protobuf message names, used in the Fp-Schema header.
+// Fully qualified protobuf message names, used in the Af-Schema header.
 const (
-	SchemaVideoChunkUploaded     = "framepulse.events.v1.VideoChunkUploaded"
-	SchemaChunkHlsReady          = "framepulse.events.v1.ChunkHlsReady"
-	SchemaChunkTranscriptIndexed = "framepulse.events.v1.ChunkTranscriptIndexed"
-	SchemaVideoIngestCompleted   = "framepulse.events.v1.VideoIngestCompleted"
-	SchemaDeadLetter             = "framepulse.dlq.v1.DeadLetter"
+	SchemaVideoChunkUploaded     = "affogato.events.v1.VideoChunkUploaded"
+	SchemaChunkHlsReady          = "affogato.events.v1.ChunkHlsReady"
+	SchemaChunkTranscriptIndexed = "affogato.events.v1.ChunkTranscriptIndexed"
+	SchemaVideoIngestCompleted   = "affogato.events.v1.VideoIngestCompleted"
+	SchemaDeadLetter             = "affogato.dlq.v1.DeadLetter"
 )
 
 // MaxChunkSeq is the largest chunk_seq representable by the 6-digit seq6 format. Key
@@ -154,7 +154,7 @@ func DLQFilterSubjects(videoID string) []string { return []string{"dlq.*." + vid
 
 // ---- Test-only fault hooks (spec 2.5) ----
 
-// TestFault is a fault name for the Fp-Test-Fault header.
+// TestFault is a fault name for the Af-Test-Fault header.
 type TestFault string
 
 const (
@@ -169,7 +169,7 @@ func (f TestFault) valid() bool {
 
 func validDurable(c string) bool { return c == ConsumerHls || c == ConsumerAI }
 
-// TestFaultValue builds an Fp-Test-Fault header value:
+// TestFaultValue builds an Af-Test-Fault header value:
 // "<fault>; consumer=<durable>[; deliveries=<n>]". deliveries 0 omits the parameter (the
 // fault's default n applies); negative values are rejected.
 func TestFaultValue(fault TestFault, consumer string, deliveries int) (string, error) {
@@ -189,7 +189,7 @@ func TestFaultValue(fault TestFault, consumer string, deliveries int) (string, e
 	return v, nil
 }
 
-// ParsedTestFault is a decoded Fp-Test-Fault value. Deliveries is 0 when not given.
+// ParsedTestFault is a decoded Af-Test-Fault value. Deliveries is 0 when not given.
 type ParsedTestFault struct {
 	Fault      TestFault
 	Consumer   string
@@ -250,14 +250,14 @@ func MsgIDDLQ(consumer string, originalStreamSeq uint64) string {
 	return "dlq:" + consumer + ":" + strconv.FormatUint(originalStreamSeq, 10)
 }
 
-// MsgIDRedrive is the Msg-Id fpctl uses when republishing a dead letter: {orig}:redrive:{n}.
+// MsgIDRedrive is the Msg-Id afctl uses when republishing a dead letter: {orig}:redrive:{n}.
 func MsgIDRedrive(originalMsgID string, n int) string {
 	return originalMsgID + ":redrive:" + strconv.Itoa(n)
 }
 
 // ---- Object locations ----
 
-// Object is a bucket + key pair. Spec text writes them joined ("fp-raw/videos/…").
+// Object is a bucket + key pair. Spec text writes them joined ("af-raw/videos/…").
 type Object struct {
 	Bucket string
 	Key    string
@@ -265,7 +265,7 @@ type Object struct {
 
 func (o Object) String() string { return o.Bucket + "/" + o.Key }
 
-// ParseObject splits "bucket/key" as written in the spec. Only the known FramePulse
+// ParseObject splits "bucket/key" as written in the spec. Only the known Affogato
 // buckets are accepted, and keys containing "..", "//", backslashes or a leading "/"
 // are rejected so step text can never address objects outside the test video.
 func ParseObject(s string) (Object, error) {

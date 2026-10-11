@@ -36,12 +36,12 @@ func (f *fakeKubectl) verbs() []string {
 }
 
 func TestParseWorkload(t *testing.T) {
-	w, err := ParseWorkload("sts/framepulse-qdrant")
-	if err != nil || w != (Workload{"statefulset", "framepulse-qdrant"}) {
+	w, err := ParseWorkload("sts/affogato-qdrant")
+	if err != nil || w != (Workload{"statefulset", "affogato-qdrant"}) {
 		t.Fatalf("got %v %v", w, err)
 	}
 	for _, bad := range []string{
-		"framepulse-qdrant",
+		"affogato-qdrant",
 		"pod/x",
 		"deployment/",
 		"deployment/--all-namespaces",
@@ -57,17 +57,17 @@ func TestParseWorkload(t *testing.T) {
 
 func TestScaleDownAndRestore(t *testing.T) {
 	f := &fakeKubectl{replicas: "3"}
-	inj, err := NewInjector(f, "framepulse", time.Minute)
+	inj, err := NewInjector(f, "affogato", time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	qdrant, _ := ParseWorkload("statefulset/framepulse-qdrant")
+	qdrant, _ := ParseWorkload("statefulset/affogato-qdrant")
 	if err := inj.ScaleDown(ctx, qdrant); err != nil {
 		t.Fatal(err)
 	}
 	for _, c := range f.calls {
-		if c[0] != "--namespace" || c[1] != "framepulse" {
+		if c[0] != "--namespace" || c[1] != "affogato" {
 			t.Fatalf("call without namespace scoping: %v", c)
 		}
 	}
@@ -79,8 +79,8 @@ func TestScaleDownAndRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	want := []string{
-		"scale statefulset/framepulse-qdrant --replicas=3",
-		"rollout status statefulset/framepulse-qdrant --timeout=1m0s",
+		"scale statefulset/affogato-qdrant --replicas=3",
+		"rollout status statefulset/affogato-qdrant --timeout=1m0s",
 	}
 	if !reflect.DeepEqual(f.verbs(), want) {
 		t.Fatalf("restore calls = %v", f.verbs())
@@ -96,10 +96,10 @@ func TestScaleDownAndRestore(t *testing.T) {
 
 func TestRestoreOrderAndErrors(t *testing.T) {
 	f := &fakeKubectl{replicas: "1"}
-	inj, _ := NewInjector(f, "framepulse", time.Minute)
+	inj, _ := NewInjector(f, "affogato", time.Minute)
 	ctx := context.Background()
-	ai, _ := ParseWorkload("deployment/framepulse-ai-worker")
-	if err := inj.PauseKEDA(ctx, "framepulse-ai-worker", 0); err != nil {
+	ai, _ := ParseWorkload("deployment/affogato-ai-worker")
+	if err := inj.PauseKEDA(ctx, "affogato-ai-worker", 0); err != nil {
 		t.Fatal(err)
 	}
 	if err := inj.ScaleDown(ctx, ai); err != nil {
@@ -108,13 +108,13 @@ func TestRestoreOrderAndErrors(t *testing.T) {
 	f.calls = nil
 	f.failOn = "rollout status"
 	err := inj.RestoreAll(ctx)
-	if err == nil || !strings.Contains(err.Error(), "framepulse-ai-worker") {
+	if err == nil || !strings.Contains(err.Error(), "affogato-ai-worker") {
 		t.Fatalf("want restore error, got %v", err)
 	}
 	// LIFO: scale back first, then unpause KEDA; the unpause still ran despite the error.
 	v := f.verbs()
-	if len(v) != 3 || !strings.HasPrefix(v[0], "scale deployment/framepulse-ai-worker --replicas=1") ||
-		v[2] != "annotate scaledobject.keda.sh/framepulse-ai-worker autoscaling.keda.sh/paused-replicas-" {
+	if len(v) != 3 || !strings.HasPrefix(v[0], "scale deployment/affogato-ai-worker --replicas=1") ||
+		v[2] != "annotate scaledobject.keda.sh/affogato-ai-worker autoscaling.keda.sh/paused-replicas-" {
 		t.Fatalf("restore order = %v", v)
 	}
 }
@@ -123,12 +123,12 @@ func TestInjectorValidation(t *testing.T) {
 	if _, err := NewInjector(&fakeKubectl{}, "--all-namespaces", time.Minute); err == nil {
 		t.Error("flag-like namespace accepted")
 	}
-	inj, _ := NewInjector(&fakeKubectl{}, "framepulse", time.Minute)
+	inj, _ := NewInjector(&fakeKubectl{}, "affogato", time.Minute)
 	if err := inj.PauseKEDA(context.Background(), "x --overwrite", 0); err == nil {
 		t.Error("invalid scaledobject accepted")
 	}
 	f := &fakeKubectl{replicas: "abc"}
-	inj, _ = NewInjector(f, "framepulse", time.Minute)
+	inj, _ = NewInjector(f, "affogato", time.Minute)
 	w, _ := ParseWorkload("deployment/x")
 	if err := inj.ScaleDown(context.Background(), w); err == nil {
 		t.Error("garbage replicas accepted")
@@ -142,7 +142,7 @@ func TestInjectorValidation(t *testing.T) {
 // the readiness wait must exclude both phases or the Background step hangs until timeout.
 func TestWaitReadyExcludesTerminatedPods(t *testing.T) {
 	f := &fakeKubectl{}
-	inj, err := NewInjector(f, "framepulse", 2*time.Minute)
+	inj, err := NewInjector(f, "affogato", 2*time.Minute)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -157,7 +157,7 @@ func TestWaitReadyExcludesTerminatedPods(t *testing.T) {
 		t.Fatalf("kubectl calls:\n got %q\nwant %q", got, want)
 	}
 	for _, c := range f.calls {
-		if c[0] != "--namespace" || c[1] != "framepulse" {
+		if c[0] != "--namespace" || c[1] != "affogato" {
 			t.Errorf("call not namespaced: %q", c)
 		}
 	}

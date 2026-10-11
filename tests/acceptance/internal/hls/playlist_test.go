@@ -55,7 +55,7 @@ func TestCheckVODRejects(t *testing.T) {
 		"no endlist":        strings.Replace(vodWithGap, "#EXT-X-ENDLIST\n", "", 1),
 		"event type":        strings.Replace(vodWithGap, "TYPE:VOD", "TYPE:EVENT", 1),
 		"wrong target":      strings.Replace(vodWithGap, "TARGETDURATION:3", "TARGETDURATION:2", 1),
-		"absolute uri":      strings.Replace(vodWithGap, "000000.ts", "http://minio:9000/fp-media/x/000000.ts", 1),
+		"absolute uri":      strings.Replace(vodWithGap, "000000.ts", "http://minio:9000/af-media/x/000000.ts", 1),
 		"host-relative uri": strings.Replace(vodWithGap, "000000.ts", "/api/v1/videos/x/hls/src/000000.ts", 1),
 		"traversal uri":     strings.Replace(vodWithGap, "000000.ts", "../other/000000.ts", 1),
 		"leading disc":      strings.Replace(vodWithGap, "#EXT-X-MEDIA-SEQUENCE:0\n", "#EXT-X-MEDIA-SEQUENCE:0\n#EXT-X-DISCONTINUITY\n", 1),

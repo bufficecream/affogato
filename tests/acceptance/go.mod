@@ -1,4 +1,4 @@
-module github.com/framepulse/framepulse/tests/acceptance
+module github.com/affogato/affogato/tests/acceptance
 
 go 1.26.0
 

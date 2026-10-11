@@ -10,7 +10,7 @@ import (
 
 // PresignCheck describes what a presigned MinIO GET URL must satisfy (spec 2.1, A5, B2).
 type PresignCheck struct {
-	PublicEndpoint string        // FP_MINIO_PUBLIC_ENDPOINT, e.g. http://minio.localtest.me:9000
+	PublicEndpoint string        // AF_MINIO_PUBLIC_ENDPOINT, e.g. http://minio.localtest.me:9000
 	Bucket, Key    string        // expected object (path-style addressing)
 	MaxTTL         time.Duration // 10 min per contract
 	Now            time.Time     // reference time; zero = time.Now()

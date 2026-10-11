@@ -1,4 +1,4 @@
-# Copied verbatim from framepulse_spec.md section 4 (only the feature tag line is added).
+# Copied verbatim from affogato_spec.md section 4 (only the feature tag line is added).
 # Do not edit here: change the spec, then re-copy. TestFeaturesMatchSpec enforces this.
 @cold-path
 Feature: Asynchronous transcription and vector indexing
@@ -12,7 +12,7 @@ Feature: Asynchronous transcription and vector indexing
     When its "VideoChunkUploaded" event is delivered to consumer "ai-indexer"
     Then the AI Worker extracts the audio track and transcribes it with "faster-whisper/small/int8"
     And the detected language "en" is recorded in the transcript
-    And writes the transcript to "fp-media/videos/V/transcripts/000042.json"
+    And writes the transcript to "af-media/videos/V/transcripts/000042.json"
     And embeds the text with "intfloat/multilingual-e5-small" using the "passage: " prefix
     And upserts one Qdrant point with id UUIDv5("V:000042") into alias "transcripts" (collection "transcripts_me5s384_v1")
     And the point payload has thumbnail_key "videos/V/thumbs/000042.jpg", language "en" and the chunk's start_ms/end_ms

@@ -15,7 +15,7 @@ import (
 
 	"github.com/nats-io/nats.go"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 // Event is one stored JetStream message as observed by the test.

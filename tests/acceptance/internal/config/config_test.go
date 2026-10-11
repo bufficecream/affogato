@@ -13,7 +13,7 @@ func TestDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("defaults invalid: %v", err)
 	}
-	if c.NATSURL != "nats://127.0.0.1:4222" || c.KubeNamespace != "framepulse" || c.EventTimeout != 30*time.Second {
+	if c.NATSURL != "nats://127.0.0.1:4222" || c.KubeNamespace != "affogato" || c.EventTimeout != 30*time.Second {
 		t.Errorf("unexpected defaults: %+v", c)
 	}
 	// kind values (spec 2.2 / A15): FINALIZE_IDLE_TIMEOUT=10s, FINALIZE_SWEEP_INTERVAL=2s.
@@ -30,34 +30,34 @@ func TestDefaults(t *testing.T) {
 
 func TestOverrides(t *testing.T) {
 	c, err := load(env(map[string]string{
-		"FP_NATS_URL":           "nats://nats.framepulse.svc:4222",
-		"FP_EVENT_TIMEOUT":      "45s",
-		"FP_MINIO_USE_TLS":      "true",
-		"FP_MAX_RESPONSE_BYTES": "1024",
+		"AF_NATS_URL":           "nats://nats.affogato.svc:4222",
+		"AF_EVENT_TIMEOUT":      "45s",
+		"AF_MINIO_USE_TLS":      "true",
+		"AF_MAX_RESPONSE_BYTES": "1024",
 	}))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if c.NATSURL != "nats://nats.framepulse.svc:4222" || c.EventTimeout != 45*time.Second || !c.MinIOUseTLS || c.MaxResponseBytes != 1024 {
+	if c.NATSURL != "nats://nats.affogato.svc:4222" || c.EventTimeout != 45*time.Second || !c.MinIOUseTLS || c.MaxResponseBytes != 1024 {
 		t.Errorf("overrides not applied: %+v", c)
 	}
 }
 
 func TestInvalidValuesAreAllReported(t *testing.T) {
 	_, err := load(env(map[string]string{
-		"FP_EVENT_TIMEOUT":         "soon",
-		"FP_RETRY_TIMEOUT":         "-1s",
-		"FP_MINIO_USE_TLS":         "maybe",
-		"FP_API_BASE_URL":          "localhost:8080",
-		"FP_MINIO_ENDPOINT":        "http://minio:9000",
-		"FP_MAX_RESPONSE_BYTES":    "0",
-		"FP_MINIO_PUBLIC_ENDPOINT": "::bad",
+		"AF_EVENT_TIMEOUT":         "soon",
+		"AF_RETRY_TIMEOUT":         "-1s",
+		"AF_MINIO_USE_TLS":         "maybe",
+		"AF_API_BASE_URL":          "localhost:8080",
+		"AF_MINIO_ENDPOINT":        "http://minio:9000",
+		"AF_MAX_RESPONSE_BYTES":    "0",
+		"AF_MINIO_PUBLIC_ENDPOINT": "::bad",
 	}))
 	if err == nil {
 		t.Fatal("expected errors")
 	}
-	for _, key := range []string{"FP_EVENT_TIMEOUT", "FP_RETRY_TIMEOUT", "FP_MINIO_USE_TLS",
-		"FP_API_BASE_URL", "FP_MINIO_ENDPOINT", "FP_MAX_RESPONSE_BYTES", "FP_MINIO_PUBLIC_ENDPOINT"} {
+	for _, key := range []string{"AF_EVENT_TIMEOUT", "AF_RETRY_TIMEOUT", "AF_MINIO_USE_TLS",
+		"AF_API_BASE_URL", "AF_MINIO_ENDPOINT", "AF_MAX_RESPONSE_BYTES", "AF_MINIO_PUBLIC_ENDPOINT"} {
 		if !strings.Contains(err.Error(), key) {
 			t.Errorf("error does not mention %s: %v", key, err)
 		}
@@ -66,10 +66,10 @@ func TestInvalidValuesAreAllReported(t *testing.T) {
 
 func TestStringRedactsSecrets(t *testing.T) {
 	c, err := load(env(map[string]string{
-		"FP_MINIO_ACCESS_KEY": "AKIA-TEST-ACCESS",
-		"FP_MINIO_SECRET_KEY": "super-secret-value",
-		"FP_QDRANT_API_KEY":   "qdrant-secret",
-		"FP_NATS_CREDS":       "/var/run/secrets/nats.creds",
+		"AF_MINIO_ACCESS_KEY": "AKIA-TEST-ACCESS",
+		"AF_MINIO_SECRET_KEY": "super-secret-value",
+		"AF_QDRANT_API_KEY":   "qdrant-secret",
+		"AF_NATS_CREDS":       "/var/run/secrets/nats.creds",
 	}))
 	if err != nil {
 		t.Fatal(err)

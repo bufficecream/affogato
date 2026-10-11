@@ -1,7 +1,7 @@
-# FramePulse: System Architecture & BDD Master Specifications
+# Affogato: System Architecture & BDD Master Specifications
 
 ## 1. Project Overview & Glossary Context
-**FramePulse** is a cloud-native, distributed video processing and semantic search pipeline designed to explore real-time stream processing, asynchronous AI analysis, and vector-based search using Go and Rust.
+**Affogato** is a cloud-native, distributed video processing and semantic search pipeline designed to explore real-time stream processing, asynchronous AI analysis, and vector-based search using Go and Rust.
 
 ### Key Terminology Reference
 - **Producer (Go):** Simulates video cameras or client uploads, chopping raw videos into 2-second chunks (`.ts`) and publishing events.

@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 const fHot = "F1 hot-path"
@@ -12,7 +12,7 @@ const fHot = "F1 hot-path"
 // Feature 1: Chunk processing into HLS segments.
 func registerHotPath(r Registrar) {
 	// ---- Background ----
-	r.Step(`^the FramePulse Helm chart is deployed to the kind test cluster and all pods are ready$`,
+	r.Step(`^the Affogato Helm chart is deployed to the kind test cluster and all pods are ready$`,
 		func(ctx context.Context) error {
 			// TODO: w.Faults().WaitReady(ctx); verify streams VIDEO_EVENTS/VIDEO_DLQ, KV
 			// HLS_INDEX and alias "transcripts" exist (fail fast with a clear message).
@@ -38,7 +38,7 @@ func registerHotPath(r Registrar) {
 				return err
 			}
 			// TODO: exec Cfg.ProducerBin with FixturesDir/fixture and --video-id vid; record the
-			// publish time of each chunk for latency; register cleanup of fp-raw/fp-media prefixes.
+			// publish time of each chunk for latency; register cleanup of af-raw/af-media prefixes.
 			return pending(fHot, "run Producer CLI on %s for video %s", fixture, vid)
 		})
 	r.Step(`^the raw object "([^"]+)" exists with content-type "([^"]+)"$`,
@@ -47,7 +47,7 @@ func registerHotPath(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO: s3.AssertExists(o, contentType); also x-amz-meta-fp-sha256 == sha256(body).
+			// TODO: s3.AssertExists(o, contentType); also x-amz-meta-af-sha256 == sha256(body).
 			return pending(fHot, "assert %s exists with content-type %s", o, contentType)
 		})
 	r.Step(`^an? "([^"]+)" event for chunk (\d+) is published on "([^"]+)"$`,
@@ -60,7 +60,7 @@ func registerHotPath(r Registrar) {
 				return err
 			}
 			// TODO: WaitFor(OnSubject(subj) && WithMsgID(uploaded:/hls-ready:…)) and check
-			// Fp-Schema + Content-Type headers; decode and check chunk_seq.
+			// Af-Schema + Content-Type headers; decode and check chunk_seq.
 			return pending(fHot, "wait for %s chunk %d on %s", event, chunk, subj)
 		})
 	r.Step(`^the Stream Worker writes "([^"]+)" by remuxing, without re-encoding$`,
@@ -144,7 +144,7 @@ func registerHotPath(r Registrar) {
 				return err
 			}
 			// TODO: api.Get(p) (no redirect follow); Location() + httpclient.CheckPresignedURL
-			// against MinIOPublicEndpoint and the fp-media segment key; MaxTTL 10m.
+			// against MinIOPublicEndpoint and the af-media segment key; MaxTTL 10m.
 			return pending(fHot, "GET %s expect %d with presigned Location", p, status)
 		})
 
@@ -165,7 +165,7 @@ func registerHotPath(r Registrar) {
 				return fmt.Errorf("unknown consumer %q", consumer)
 			}
 			// TODO: delivery time is only observable inside the worker: scrape histogram
-			// fp_consume_latency_seconds{consumer} from all replicas (metrics.Sum on buckets),
+			// af_consume_latency_seconds{consumer} from all replicas (metrics.Sum on buckets),
 			// compute p99 from bucket deltas over the run window.
 			return pending(fHot, "p99 delivery latency for %s <= %d ms (from worker histogram)", consumer, ms)
 		})
@@ -188,7 +188,7 @@ func registerHotPath(r Registrar) {
 			}
 			// TODO: upload raw chunks, publish VideoChunkUploaded in the given order, each after
 			// the previous ChunkHlsReady. "Different replicas" needs >= 2 stream-worker replicas
-			// and evidence (Fp-Producer / worker_instance) - spec gap: not observable on success.
+			// and evidence (Af-Producer / worker_instance) - spec gap: not observable on success.
 			return pending(fHot, "publish chunks %v of %s in order", seqs, vid)
 		})
 	r.Step(`^"HLS_INDEX" key "([^"]+)" lists chunks (\d+(?:, \d+)+) in order exactly once each$`,
@@ -230,7 +230,7 @@ func registerHotPath(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO: upload fixture chunks 0..n-1 to fp-raw (chunk_corrupted.ts for `bad`) with
+			// TODO: upload fixture chunks 0..n-1 to af-raw (chunk_corrupted.ts for `bad`) with
 			// the sha256 of the bytes actually uploaded, so the failure is INVALID_MEDIA and
 			// not CHECKSUM_MISMATCH.
 			return pending(fHot, "upload %d raw chunks for %s with chunk %d corrupted", n, vid, bad)

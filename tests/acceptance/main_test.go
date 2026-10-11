@@ -1,4 +1,4 @@
-// Acceptance test runner for FramePulse (spec section 4), executed with godog.
+// Acceptance test runner for Affogato (spec section 4), executed with godog.
 //
 // Run from the host (port-forwarded cluster) or in-cluster as a compiled test binary:
 //
@@ -14,7 +14,7 @@
 //	GODOG_RANDOM   random seed (0 = off)    default 0
 //
 // Undefined or ambiguous steps always fail the run, strict or not.
-// Connection settings: see internal/config (FP_* variables).
+// Connection settings: see internal/config (AF_* variables).
 package acceptance
 
 import (
@@ -30,11 +30,11 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/cucumber/godog/colors"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/config"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/fault"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/payload"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/world"
-	"github.com/framepulse/framepulse/tests/acceptance/steps"
+	"github.com/affogato/affogato/tests/acceptance/internal/config"
+	"github.com/affogato/affogato/tests/acceptance/internal/fault"
+	"github.com/affogato/affogato/tests/acceptance/internal/payload"
+	"github.com/affogato/affogato/tests/acceptance/internal/world"
+	"github.com/affogato/affogato/tests/acceptance/steps"
 )
 
 var opts = godog.Options{
@@ -111,7 +111,7 @@ func TestFeatures(t *testing.T) {
 	tracker := steps.NewTracker()
 
 	status := godog.TestSuite{
-		Name: "framepulse-acceptance",
+		Name: "affogato-acceptance",
 		TestSuiteInitializer: func(tsc *godog.TestSuiteContext) {
 			// Safety net: restore anything a scenario's own cleanup failed to restore.
 			tsc.AfterSuite(func() {

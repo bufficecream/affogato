@@ -1,4 +1,4 @@
-# FramePulse test entry points (Kubernetes-only acceptance; spec A10).
+# Affogato test entry points (Kubernetes-only acceptance; spec A10).
 #
 #   make unit             helper unit tests + step coverage, no infrastructure
 #   make vet              go vet the acceptance module
@@ -23,10 +23,10 @@ GO            ?= go
 KIND          ?= kind
 KUBECTL       ?= kubectl
 DOCKER        ?= docker
-KIND_CLUSTER  ?= framepulse
+KIND_CLUSTER  ?= affogato
 KIND_NODE_IMAGE ?=
-IMAGE         ?= framepulse/acceptance:dev
-NAMESPACE     ?= framepulse
+IMAGE         ?= affogato/acceptance:dev
+NAMESPACE     ?= affogato
 GODOG_STRICT  ?= false
 FFMPEG        ?=
 FFPROBE       ?=
@@ -62,7 +62,7 @@ fixtures-verify:
 # the Kubernetes JSON schemas, so this needs network access but no cluster.
 manifests-lint:
 	@tmp=$$(mktemp -d) && trap 'rm -rf "$$tmp"' EXIT && \
-	sed -e 's|__JOB_NAME__|fp-acceptance|g' -e 's|__IMAGE__|$(IMAGE)|g' \
+	sed -e 's|__JOB_NAME__|af-acceptance|g' -e 's|__IMAGE__|$(IMAGE)|g' \
 	    -e 's|__GODOG_TAGS__|~@load|g' -e 's|__GODOG_STRICT__|false|g' kind/acceptance-job.yaml > "$$tmp/acceptance-job.yaml" && \
 	cp kind/acceptance-rbac.yaml kind/kind-config.yaml "$$tmp/" && \
 	$(DOCKER) run --rm -v "$$tmp:/m:ro" $(KUBECONFORM_IMAGE) -strict -summary -verbose \
@@ -72,7 +72,7 @@ kind-up:
 	$(KIND) create cluster --name $(KIND_CLUSTER) --config kind/kind-config.yaml \
 		$(if $(KIND_NODE_IMAGE),--image $(KIND_NODE_IMAGE),) --wait 120s
 	$(KUBECTL) create namespace $(NAMESPACE) --dry-run=client -o yaml | $(KUBECTL) apply -f -
-	@echo "next: helm install framepulse deploy/helm/framepulse -n $(NAMESPACE) -f deploy/helm/framepulse/values-kind.yaml --wait"
+	@echo "next: helm install affogato deploy/helm/affogato -n $(NAMESPACE) -f deploy/helm/affogato/values-kind.yaml --wait"
 
 kind-down:
 	$(KIND) delete cluster --name $(KIND_CLUSTER)
@@ -84,12 +84,12 @@ kind-load: image
 	$(KIND) load docker-image $(IMAGE) --name $(KIND_CLUSTER)
 
 acceptance: kind-load
-	./kind/run-job.sh $(IMAGE) '~@load' fp-acceptance
+	./kind/run-job.sh $(IMAGE) '~@load' af-acceptance
 
 load: kind-load
-	./kind/run-job.sh $(IMAGE) '@load' fp-acceptance-load
+	./kind/run-job.sh $(IMAGE) '@load' af-acceptance-load
 
 acceptance-host:
-	@echo "requires ./kind/port-forward.sh running and FP_MINIO_ACCESS_KEY/FP_MINIO_SECRET_KEY set"
-	cd $(ACC) && FP_FIXTURES_DIR=$(FIXTURES_DIR) $(GO) test -count=1 -run '^TestFeatures$$' . -v \
+	@echo "requires ./kind/port-forward.sh running and AF_MINIO_ACCESS_KEY/AF_MINIO_SECRET_KEY set"
+	cd $(ACC) && AF_FIXTURES_DIR=$(FIXTURES_DIR) $(GO) test -count=1 -run '^TestFeatures$$' . -v \
 		-args -godog.tags='~@load'

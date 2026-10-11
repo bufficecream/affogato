@@ -10,7 +10,7 @@ import (
 	"github.com/nats-io/nats.go"
 	"github.com/nats-io/nats.go/jetstream"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 // startJetStream runs an in-process nats-server with JetStream and creates the
@@ -186,10 +186,10 @@ func TestPublishWithFaultCarriesHeader(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got := ev.Header.Get(contracts.HeaderTestFault); got != "exit-on-receive; consumer=ai-indexer" {
-		t.Errorf("Fp-Test-Fault = %q", got)
+		t.Errorf("Af-Test-Fault = %q", got)
 	}
 	if ev.Schema() != contracts.SchemaVideoChunkUploaded {
-		t.Errorf("Fp-Schema = %q", ev.Schema())
+		t.Errorf("Af-Schema = %q", ev.Schema())
 	}
 
 	if _, err := PublishWithFault(ctx, js, contracts.SubjectChunkUploaded(v), contracts.MsgIDUploaded(v, 8), contracts.SchemaVideoChunkUploaded, nil, "exit-on-receive"); err == nil {

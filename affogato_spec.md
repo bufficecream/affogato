@@ -1,4 +1,4 @@
-# FramePulse: System Architecture & BDD Master Specification
+# Affogato: System Architecture & BDD Master Specification
 
 > Status: spec v3.1 (2026-10-11) — owner decisions applied, including the QA gap
 > decisions G1–G6 from `docs/test-plan.md`; aligned with `docs/architecture-review.md`.
@@ -6,11 +6,11 @@
 > contracts (protobuf messages, stream/consumer/KV configuration, object metadata,
 > Qdrant payload schema, repo layout, CI) live in `docs/architecture-review.md`
 > Part B and are normative; if the two disagree, raise it and fix one of them.
-> The original v1 spec is kept at `docs/framepulse_spec.v1.md`.
+> The original v1 spec is kept at `docs/affogato_spec.v1.md`.
 
 ## 1. Project Overview & Glossary
 
-**FramePulse** is a cloud-native, distributed video processing and semantic search
+**Affogato** is a cloud-native, distributed video processing and semantic search
 pipeline for exploring real-time stream processing, asynchronous AI analysis and
 vector search with Go, Rust and Python. The hot path turns each uploaded chunk into an
 HLS segment within seconds, so a video becomes playable on demand (VOD) shortly after
@@ -63,7 +63,7 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
 ## 2. System Architecture (Hot Path vs. Cold Path)
 
 ```text
- [Producer CLI (Go)] --PUT raw chunk--> [MinIO fp-raw]
+ [Producer CLI (Go)] --PUT raw chunk--> [MinIO af-raw]
         | publish VideoChunkUploaded / VideoIngestCompleted
         v
  [NATS JetStream]  stream VIDEO_EVENTS  (+ KV HLS_INDEX, stream VIDEO_DLQ)
@@ -79,7 +79,7 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
   '- on finalization: static playlists           '- publish ChunkTranscriptIndexed
         |                                               |
         v                                               v
- [MinIO fp-media]                                [Qdrant: transcripts]
+ [MinIO af-media]                                [Qdrant: transcripts]
         |                                               |
         +--------------------+--------------------------+
                              v
@@ -96,7 +96,7 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
 |---|---|---|
 | Stream | `VIDEO_EVENTS` | subjects `video.chunks.>`, `video.lifecycle.>`; limits retention, 7 d |
 | Stream | `VIDEO_DLQ` | subject `dlq.{consumer}.{video_id}`; 7 d |
-| Stream | `FP_ADVISORIES` | JetStream MAX_DELIVERIES advisories, alerting only; 7 d |
+| Stream | `AF_ADVISORIES` | JetStream MAX_DELIVERIES advisories, alerting only; 7 d |
 | KV | `HLS_INDEX` | key `{video_id}.{rendition}`; per-segment status, durations, `finalized`; updated by compare-and-set; value ≤ ~152 KB at the 8,000-chunk cap (A13), `max_value_size` 1 MiB |
 | Subject | `video.chunks.uploaded.{video_id}` | `VideoChunkUploaded` (Producer) |
 | Subject | `video.chunks.hls.ready.{video_id}` | `ChunkHlsReady` (Stream Worker) |
@@ -106,24 +106,24 @@ is VOD-only; live playback of in-progress uploads is Future Work (Section 6).
 | Consumer | `hls-stream-worker` | filters `uploaded.*` and `lifecycle.completed.*` |
 | Consumer | `ai-indexer` | filters `uploaded.*` |
 
-Payloads are protobuf (`application/protobuf`), schema named in header `Fp-Schema`,
+Payloads are protobuf (`application/protobuf`), schema named in header `Af-Schema`,
 deduplicated by a deterministic `Nats-Msg-Id` (e.g. `uploaded:{video_id}:{seq6}`).
 
 **Object keys** (`seq6` = zero-padded 6-digit 0-based `chunk_seq`):
 
 | Artifact | Key |
 |---|---|
-| Raw chunk | `fp-raw/videos/{video_id}/chunks/{seq6}.ts` |
-| HLS segment | `fp-media/videos/{video_id}/hls/{rendition}/{seq6}.ts` |
-| Thumbnail | `fp-media/videos/{video_id}/thumbs/{seq6}.jpg` |
-| Transcript | `fp-media/videos/{video_id}/transcripts/{seq6}.json` |
-| Playlists (written at finalization, kept) | `fp-media/videos/{video_id}/hls/{rendition}/playlist.m3u8`, `.../hls/master.m3u8` |
+| Raw chunk | `af-raw/videos/{video_id}/chunks/{seq6}.ts` |
+| HLS segment | `af-media/videos/{video_id}/hls/{rendition}/{seq6}.ts` |
+| Thumbnail | `af-media/videos/{video_id}/thumbs/{seq6}.jpg` |
+| Transcript | `af-media/videos/{video_id}/transcripts/{seq6}.json` |
+| Playlists (written at finalization, kept) | `af-media/videos/{video_id}/hls/{rendition}/playlist.m3u8`, `.../hls/master.m3u8` |
 
 **Serving API** (MinIO is never exposed directly; MVP is VOD-only):
 
 | Endpoint | Behavior |
 |---|---|
-| `GET /api/v1/videos/{id}/hls/master.m3u8` | Unknown video: 404. Not finalized: 409 + JSON status. Finalized: 200, content of `fp-media/.../hls/master.m3u8` proxied verbatim |
+| `GET /api/v1/videos/{id}/hls/master.m3u8` | Unknown video: 404. Not finalized: 409 + JSON status. Finalized: 200, content of `af-media/.../hls/master.m3u8` proxied verbatim |
 | `GET /api/v1/videos/{id}/hls/{rendition}/playlist.m3u8` | Same rules (unknown rendition: 404); finalized: 200, static VOD playlist with `#EXT-X-ENDLIST`, proxied verbatim |
 | `GET /api/v1/videos/{id}/hls/{rendition}/{seq6}.ts` | 302 to presigned MinIO GET (10 min) |
 | `GET /api/v1/videos/{id}/thumbs/{seq6}.jpg` | 302 to presigned GET; placeholder image if missing |
@@ -197,7 +197,7 @@ Search results can refer to videos that are not finalized yet. Every result carr
   scenarios that need an unfinalized video must finish within the idle timeout.
   Events arriving after finalization do not reopen the video: a late chunk is still
   processed (segment and thumbnail written) but the index and playlists are unchanged,
-  and it is counted in metric `fp_late_chunks_total` with a warning log; a late
+  and it is counted in metric `af_late_chunks_total` with a warning log; a late
   `VideoIngestCompleted` is acked as a no-op.
 - **Failures:** Permanent errors (invalid media, missing object, checksum mismatch, bad
   schema) → `DeadLetter` to `VIDEO_DLQ`, then `Term()`. ffmpeg/ffprobe always run as
@@ -255,28 +255,28 @@ Search results can refer to videos that are not finalized yet. Every result carr
 |---|---|---|
 | `VIDEO_EVENTS` | 7 d | Replay window for reprocessing |
 | `VIDEO_DLQ` | 7 d | Operators must redrive within a week (alert on new dead letters) |
-| `FP_ADVISORIES` | 7 d | Alerting only |
-| `fp-raw` bucket | 10 d lifecycle expiry | Must stay longer than `VIDEO_DLQ` so a redrive finds the raw chunk |
-| `fp-media` bucket (segments, thumbnails, transcripts, playlists) | Until the video is deleted | Deletion is Future Work |
+| `AF_ADVISORIES` | 7 d | Alerting only |
+| `af-raw` bucket | 10 d lifecycle expiry | Must stay longer than `VIDEO_DLQ` so a redrive finds the raw chunk |
+| `af-media` bucket (segments, thumbnails, transcripts, playlists) | Until the video is deleted | Deletion is Future Work |
 | Qdrant points | Until the video is deleted | Deletion is Future Work |
 
 After 7 d, reprocessing does not use stream replay: re-embedding reads the stored
-transcripts, and re-transcription reads the HLS segments in `fp-media` (remuxed, so the
+transcripts, and re-transcription reads the HLS segments in `af-media` (remuxed, so the
 audio is identical to the raw chunk).
 
 ### 2.5 Test-only fault hooks (kind only)
 
 The Stream Worker and the AI Worker contain fault hooks so acceptance tests can produce
 crashes and missing acks deterministically. They are off unless the process starts with
-env `FP_TEST_FAULTS=1`:
-- `FP_TEST_FAULTS` unset, empty or `0` → hooks disabled; the `Fp-Test-Fault` header is
+env `AF_TEST_FAULTS=1`:
+- `AF_TEST_FAULTS` unset, empty or `0` → hooks disabled; the `Af-Test-Fault` header is
   ignored without being parsed. Any other value except `1` → the worker refuses to start.
 - Only `values-kind.yaml` sets `testFaults.enabled: true`, which makes the chart render
-  `FP_TEST_FAULTS=1`. `values-prod.yaml` never sets it, and CI fails if the rendered
-  production manifests contain `FP_TEST_FAULTS`. An enabled worker logs a warning at
-  startup and exports `fp_test_faults_enabled 1`.
+  `AF_TEST_FAULTS=1`. `values-prod.yaml` never sets it, and CI fails if the rendered
+  production manifests contain `AF_TEST_FAULTS`. An enabled worker logs a warning at
+  startup and exports `af_test_faults_enabled 1`.
 - When enabled, the test requests a fault per message with header
-  `Fp-Test-Fault: <fault>; consumer=<durable>[; deliveries=<n>]` on the event it
+  `Af-Test-Fault: <fault>; consumer=<durable>[; deliveries=<n>]` on the event it
   publishes. The fault applies only to the named consumer (the other path processes the
   message normally) and only while `num_delivered` ≤ `n`.
 
@@ -289,8 +289,8 @@ env `FP_TEST_FAULTS=1`:
 The delivery-cap check (2.2) always runs before a fault, so `exit-on-receive` gives
 exactly 5 crashed deliveries and a dead letter on the 6th (Feature 4 "crash loop");
 `crash-before-ack` gives "processed but not acked" (Feature 5), and delivery 2 is
-processed and acked normally. Workers never copy `Fp-Test-Fault` onto result events,
-and `fpctl dlq redrive` strips it. Details: `docs/architecture-review.md` B1
+processed and acked normally. Workers never copy `Af-Test-Fault` onto result events,
+and `afctl dlq redrive` strips it. Details: `docs/architecture-review.md` B1
 "Test-only fault hooks".
 
 ---
@@ -302,19 +302,19 @@ Big picture only; internals are covered in Section 2 and the review document.
 ### 3.1 C1 — System Context
 
 There are **no external systems**: speech-to-text and embedding models run inside
-FramePulse (weights baked into the image at build time), and storage and messaging are
+Affogato (weights baked into the image at build time), and storage and messaging are
 self-hosted parts of the system.
 
 ```mermaid
 C4Context
-  title FramePulse - System Context (C1)
+  title Affogato - System Context (C1)
   Person(uploader, "Uploader / Camera operator", "Submits recorded or camera video")
   Person(viewer, "Viewer", "Watches videos and searches spoken content")
   Person(ops, "Operator", "Monitors the pipeline, redrives dead letters")
-  System(fp, "FramePulse", "Ingests video, serves HLS playback and semantic search over speech")
-  Rel(uploader, fp, "Submits .mp4 via Producer CLI")
-  Rel(viewer, fp, "Plays HLS, searches", "HTTPS")
-  Rel(ops, fp, "Metrics, DLQ inspect/redrive", "dashboards, fpctl")
+  System(af, "Affogato", "Ingests video, serves HLS playback and semantic search over speech")
+  Rel(uploader, af, "Submits .mp4 via Producer CLI")
+  Rel(viewer, af, "Plays HLS, searches", "HTTPS")
+  Rel(ops, af, "Metrics, DLQ inspect/redrive", "dashboards, afctl")
 ```
 
 ```text
@@ -324,7 +324,7 @@ C4Context
               |                    (HTTPS)                  |
               v                       v                     v
   +------------------------------------------------------------------+
-  |                            FramePulse                            |
+  |                            Affogato                            |
   | ingest -> HLS playback + semantic search over transcribed speech |
   +------------------------------------------------------------------+
                (no external systems: models and storage run in-house)
@@ -334,11 +334,11 @@ C4Context
 
 ```mermaid
 C4Container
-  title FramePulse - Containers (C2)
+  title Affogato - Containers (C2)
   Person(uploader, "Uploader")
   Person(viewer, "Viewer")
   Person(ops, "Operator")
-  System_Boundary(fp, "FramePulse") {
+  System_Boundary(af, "Affogato") {
     Container(producer, "Producer CLI", "Go", "Cuts .mp4 into ~2 s MPEG-TS chunks")
     ContainerQueue(nats, "NATS JetStream", "NATS", "VIDEO_EVENTS, VIDEO_DLQ, KV HLS_INDEX")
     Container(sw, "Stream Worker", "Rust", "Hot path: remux, thumbnails, HLS index, final playlists")
@@ -364,14 +364,14 @@ C4Container
   Rel(viewer, ui, "Uses", "HTTPS")
   Rel(ui, api, "Playlists, search", "HTTPS/JSON, HLS")
   Rel(ui, minio, "Fetch segments/thumbs after 302", "HTTPS presigned")
-  Rel(ops, nats, "Inspect/redrive DLQ", "fpctl")
+  Rel(ops, nats, "Inspect/redrive DLQ", "afctl")
 ```
 
 ```text
  Uploader --.mp4--> [Producer CLI (Go)] --PUT raw chunks (S3)------------> [MinIO]
                             | publish events                                 ^  ^  ^
                             v                                                |  |  |
- Operator --fpctl--> [NATS JetStream: VIDEO_EVENTS | VIDEO_DLQ | KV HLS_INDEX]  |  |
+ Operator --afctl--> [NATS JetStream: VIDEO_EVENTS | VIDEO_DLQ | KV HLS_INDEX]  |  |
                        ^        ^          ^          ^                      |  |  |
        pull/CAS/publish|  pull/ |  req/reply|   read KV/|                    |  |  |
                        |publish |  embed    |   request |                    |  |  |
@@ -395,8 +395,8 @@ environment.
   interfaces with in-memory fakes; tests that run ffmpeg use committed fixture media).
 - **Acceptance tests** (these features, run with godog) execute against a local
   **`kind`** cluster, on developer machines and in CI alike. The cluster runs the same
-  Helm chart as production (`deploy/helm/framepulse`) with `values-kind.yaml`: NATS
-  (+ NACK), MinIO, Qdrant, KEDA and all FramePulse services. In CI the runner is an
+  Helm chart as production (`deploy/helm/affogato`) with `values-kind.yaml`: NATS
+  (+ NACK), MinIO, Qdrant, KEDA and all Affogato services. In CI the runner is an
   in-cluster Job; developers may run it from the host via `kubectl port-forward`.
 - Fault-injection steps (e.g. "Qdrant is unavailable") scale the workload to zero with
   `kubectl` and restore it afterwards. Crash and no-ack steps (Feature 4 "crash loop",
@@ -422,20 +422,20 @@ Feature: Chunk processing into HLS segments
   So that it is playable on demand shortly after the upload finishes
 
   Background:
-    Given the FramePulse Helm chart is deployed to the kind test cluster and all pods are ready
+    Given the Affogato Helm chart is deployed to the kind test cluster and all pods are ready
     And a new video_id "V" has been assigned by the Producer CLI
 
   Scenario: A valid video becomes HLS segments and plays as VOD after finalization
     When the Producer CLI ingests "sample_1080p.mp4" (H.264 + AAC) as video "V"
-    Then the raw object "fp-raw/videos/V/chunks/000000.ts" exists with content-type "video/mp2t"
+    Then the raw object "af-raw/videos/V/chunks/000000.ts" exists with content-type "video/mp2t"
     And a "VideoChunkUploaded" event for chunk 0 is published on "video.chunks.uploaded.V"
-    And the Stream Worker writes "fp-media/videos/V/hls/src/000000.ts" by remuxing, without re-encoding
-    And writes the thumbnail "fp-media/videos/V/thumbs/000000.jpg"
+    And the Stream Worker writes "af-media/videos/V/hls/src/000000.ts" by remuxing, without re-encoding
+    And writes the thumbnail "af-media/videos/V/thumbs/000000.jpg"
     And "HLS_INDEX" key "V.src" lists chunk 0 as READY with its measured duration
     And a "ChunkHlsReady" event for chunk 0 is published on "video.chunks.hls.ready.V"
     When "HLS_INDEX" key "V.src" is marked finalized
     Then GET "/api/v1/videos/V/hls/src/playlist.m3u8" returns 200 with "#EXT-X-PLAYLIST-TYPE:VOD" and "#EXT-X-ENDLIST"
-    And the response body is byte-identical to the object "fp-media/videos/V/hls/src/playlist.m3u8"
+    And the response body is byte-identical to the object "af-media/videos/V/hls/src/playlist.m3u8"
     And the playlist references "000000.ts" with an EXTINF equal to the measured duration
     And GET "/api/v1/videos/V/hls/src/000000.ts" returns 302 to a presigned MinIO URL
 
@@ -449,7 +449,7 @@ Feature: Chunk processing into HLS segments
     When chunks 2, 0 and 1 of video "V" are processed in that order by different replicas
     And "VideoIngestCompleted" with chunk_count 3 is delivered
     Then "HLS_INDEX" key "V.src" lists chunks 0, 1, 2 in order exactly once each
-    And the static playlist "fp-media/videos/V/hls/src/playlist.m3u8" lists "000000.ts", "000001.ts", "000002.ts" in order
+    And the static playlist "af-media/videos/V/hls/src/playlist.m3u8" lists "000000.ts", "000001.ts", "000002.ts" in order
 
   Scenario: A corrupted chunk is dead-lettered without crashing the worker
     Given video "V" has 6 chunks and the raw chunk object for chunk 3 contains invalid media bytes
@@ -481,8 +481,8 @@ Feature: Video finalization
   Scenario: VideoIngestCompleted finalizes the video
     Given chunks 0 to 4 of video "V" are READY in "HLS_INDEX"
     When the Producer publishes "VideoIngestCompleted" with chunk_count 5 on "video.lifecycle.completed.V"
-    Then the Stream Worker writes "fp-media/videos/V/hls/src/playlist.m3u8" with 5 segments, "#EXT-X-PLAYLIST-TYPE:VOD" and "#EXT-X-ENDLIST"
-    And writes "fp-media/videos/V/hls/master.m3u8" with exactly one variant "src/playlist.m3u8"
+    Then the Stream Worker writes "af-media/videos/V/hls/src/playlist.m3u8" with 5 segments, "#EXT-X-PLAYLIST-TYPE:VOD" and "#EXT-X-ENDLIST"
+    And writes "af-media/videos/V/hls/master.m3u8" with exactly one variant "src/playlist.m3u8"
     And only after both objects exist is "HLS_INDEX" key "V.src" marked finalized
     And GET "/api/v1/videos/V/hls/src/playlist.m3u8" returns 200 with the content of that object, not a redirect
     And GET "/api/v1/videos/V/hls/master.m3u8" returns 200 and its variant URI resolves to "/api/v1/videos/V/hls/src/playlist.m3u8"
@@ -514,7 +514,7 @@ Feature: Video finalization
     Given video "V" was force-finalized after the idle timeout
     When a "VideoChunkUploaded" event for a new chunk of video "V" is delivered
     Then the static playlist is unchanged and "HLS_INDEX" key "V.src" stays finalized
-    And metric "fp_late_chunks_total" is incremented
+    And metric "af_late_chunks_total" is incremented
 ```
 
 ### Feature 3: Asynchronous Transcription and Vector Indexing (Cold Path)
@@ -530,7 +530,7 @@ Feature: Asynchronous transcription and vector indexing
     When its "VideoChunkUploaded" event is delivered to consumer "ai-indexer"
     Then the AI Worker extracts the audio track and transcribes it with "faster-whisper/small/int8"
     And the detected language "en" is recorded in the transcript
-    And writes the transcript to "fp-media/videos/V/transcripts/000042.json"
+    And writes the transcript to "af-media/videos/V/transcripts/000042.json"
     And embeds the text with "intfloat/multilingual-e5-small" using the "passage: " prefix
     And upserts one Qdrant point with id UUIDv5("V:000042") into alias "transcripts" (collection "transcripts_me5s384_v1")
     And the point payload has thumbnail_key "videos/V/thumbs/000042.jpg", language "en" and the chunk's start_ms/end_ms
@@ -573,7 +573,7 @@ Feature: Failure handling on both paths
 
   Scenario: Redriving dead letters after recovery
     Given dead letters from consumer "ai-indexer" exist and Qdrant is available again
-    When the operator runs "fpctl dlq redrive --consumer ai-indexer --since 1h"
+    When the operator runs "afctl dlq redrive --consumer ai-indexer --since 1h"
     Then the original payloads are republished to their original subjects
     And each affected chunk is eventually indexed exactly once
 ```
@@ -658,10 +658,10 @@ Feature: Retention configuration
 
   Scenario: Streams and buckets carry the configured retention
     When the operator inspects the deployed NATS and MinIO configuration
-    Then streams "VIDEO_EVENTS", "VIDEO_DLQ" and "FP_ADVISORIES" each have max_age 7 days
-    And bucket "fp-raw" expires objects after 10 days
-    And bucket "fp-media" has no expiration rule
-    And the "fp-raw" expiry is longer than the "VIDEO_DLQ" max_age
+    Then streams "VIDEO_EVENTS", "VIDEO_DLQ" and "AF_ADVISORIES" each have max_age 7 days
+    And bucket "af-raw" expires objects after 10 days
+    And bucket "af-media" has no expiration rule
+    And the "af-raw" expiry is longer than the "VIDEO_DLQ" max_age
 ```
 
 ---
@@ -679,9 +679,9 @@ change the contracts in `docs/architecture-review.md`.
 | A3 | Static playlists in MinIO | Written once at finalization (before `finalized=true`) and kept; they are the only playlists. Served by proxying their content, not by redirect | Decided 2026-10-11 | — |
 | A4 | Hot-path SLO meaning | 500 ms = p99 publish-to-delivery; 1.5 s p95 publish-to-segment-READY; remux only | Decided 2026-10-11 (wording to be revisited during development) | Transcoding or an ABR ladder is added (needs a new budget) |
 | A5 | Search thumbnail URL | Stable API redirect URL (302 to presigned, 10 min) | Decided 2026-10-11 | Clients need direct, cacheable URLs (CDN) |
-| A6 | Retention | `VIDEO_EVENTS` 7 d; `VIDEO_DLQ` 7 d; `FP_ADVISORIES` 7 d; `fp-raw` 10 d (> DLQ); `fp-media` and Qdrant until deleted | Decided 2026-10-11 | Storage cost or privacy requirements appear; deletion is Future Work 2 |
+| A6 | Retention | `VIDEO_EVENTS` 7 d; `VIDEO_DLQ` 7 d; `AF_ADVISORIES` 7 d; `af-raw` 10 d (> DLQ); `af-media` and Qdrant until deleted | Decided 2026-10-11 | Storage cost or privacy requirements appear; deletion is Future Work 2 |
 | A7 | AI compute / Whisper | CPU-only; `WHISPER_MODEL` (tiny/base/small/medium/large-v3), default `small` int8; `stt_model` records the actual model; 5 s target measured with `small` without backlog. The embedding model is not a runtime setting | Decided 2026-10-11 | Backlog latency or larger models matter (Future Work 7) |
-| A8 | Names / packaging | Module path placeholder `github.com/framepulse/framepulse`; generated code committed in monorepo `gen/` | Decided 2026-10-11 (placeholder kept) | Real org/repo is chosen |
+| A8 | Names / packaging | Module path placeholder `github.com/affogato/affogato`; generated code committed in monorepo `gen/` | Decided 2026-10-11 (placeholder kept) | Real org/repo is chosen |
 | A9 | Tenancy / auth | None in MVP; `ChunkRef` field 3 held for `tenant_id` | Decided 2026-10-11 | Multi-user deployment is planned (Future Work 6) |
 | A10 | Test environment | Kubernetes-only: acceptance/BDD (godog) on a local `kind` cluster, locally and in CI, with the production Helm chart and `values-kind.yaml`; unit tests without infrastructure; no compose/testcontainers | Decided 2026-10-11 (Helm and godog chosen by architect) | — |
 | A11 | Renditions | Single rendition `src` (no ABR ladder) | Default | Mobile/low-bandwidth playback is required (Future Work 3) |
@@ -693,7 +693,7 @@ change the contracts in `docs/architecture-review.md`.
 | A17 | Language detection | Per chunk in the MVP (may flip on 2 s clips); per-video pinning is Future Work 5 | Decided 2026-10-11 | Japanese/Chinese content is added |
 | A18 | Qdrant point-ID namespace | UUIDv5 namespace `c1907ffe-0c06-4077-8866-08fb8d658b77`, name `{video_id}:{seq6}`; fixed forever | Decided 2026-10-11 | Never (changing it means a full re-index) |
 | A19 | Retry cap | At most 5 processing attempts; a transient failure on attempt 5 dead-letters immediately (`RETRIES_EXHAUSTED`); a delivery with `num_delivered` ≥ 6 is dead-lettered on receipt | Decided 2026-10-11 | — |
-| A20 | Test fault hooks | `Fp-Test-Fault` header honored only when the worker runs with `FP_TEST_FAULTS=1`, set only by `values-kind.yaml` (2.5) | Decided 2026-10-11 | — |
+| A20 | Test fault hooks | `Af-Test-Fault` header honored only when the worker runs with `AF_TEST_FAULTS=1`, set only by `values-kind.yaml` (2.5) | Decided 2026-10-11 | — |
 
 ---
 
@@ -707,7 +707,7 @@ Not in the MVP. Listed in rough priority order; each needs its own design review
    main rule to add: render only the contiguous prefix of chunks that are READY or FAILED,
    never past a chunk that is still pending, because chunks are processed out of order.
 2. **Video deletion.** A `VideoDeleted` event (`video.lifecycle.deleted.{video_id}`)
-   cascades to the `fp-media` and `fp-raw` prefixes, Qdrant points (filter on
+   cascades to the `af-media` and `af-raw` prefixes, Qdrant points (filter on
    `video_id`) and the `HLS_INDEX` keys. Each step must be idempotent.
 3. **Multi-bitrate ABR ladder.** More renditions besides `src`, with a master playlist
    listing several variants. Needs transcoding and a new hot-path latency budget.
@@ -721,7 +721,7 @@ Not in the MVP. Listed in rough priority order; each needs its own design review
    least-privilege permissions, and API authentication.
 7. **GPU node pool** for AI workers: latency under backlog and larger Whisper models.
 8. **Manual finalize command.** The MVP force-finalizes abandoned uploads after an idle
-   timeout (A15). An operator command (`fpctl video finalize --force`) could finalize a
+   timeout (A15). An operator command (`afctl video finalize --force`) could finalize a
    video on demand without waiting.
 9. **Index sharding for longer videos.** Lift the 4 h / 8,000-chunk cap (A13) by
    splitting a video's `HLS_INDEX` entry into blocks (e.g. keys
@@ -737,4 +737,4 @@ Not in the MVP. Listed in rough priority order; each needs its own design review
   (2026-10-11), and Part B data contracts: protobuf definitions, stream/consumer/KV
   configuration, headers and `Nats-Msg-Id` formats, MinIO buckets/metadata/lifecycle,
   Qdrant collection and payload, repo layout, codegen and CI.
-- `docs/framepulse_spec.v1.md` — the original spec, kept for reference.
+- `docs/affogato_spec.v1.md` — the original spec, kept for reference.

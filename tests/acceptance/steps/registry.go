@@ -24,9 +24,9 @@ import (
 	"github.com/cucumber/godog"
 	"github.com/google/uuid"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/payload"
-	"github.com/framepulse/framepulse/tests/acceptance/internal/world"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/payload"
+	"github.com/affogato/affogato/tests/acceptance/internal/world"
 )
 
 // Registrar is the subset of *godog.ScenarioContext used for registration, so tests can

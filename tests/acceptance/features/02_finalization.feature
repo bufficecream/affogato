@@ -1,4 +1,4 @@
-# Copied verbatim from framepulse_spec.md section 4 (only the feature tag line is added).
+# Copied verbatim from affogato_spec.md section 4 (only the feature tag line is added).
 # Do not edit here: change the spec, then re-copy. TestFeaturesMatchSpec enforces this.
 @finalization
 Feature: Video finalization
@@ -17,8 +17,8 @@ Feature: Video finalization
   Scenario: VideoIngestCompleted finalizes the video
     Given chunks 0 to 4 of video "V" are READY in "HLS_INDEX"
     When the Producer publishes "VideoIngestCompleted" with chunk_count 5 on "video.lifecycle.completed.V"
-    Then the Stream Worker writes "fp-media/videos/V/hls/src/playlist.m3u8" with 5 segments, "#EXT-X-PLAYLIST-TYPE:VOD" and "#EXT-X-ENDLIST"
-    And writes "fp-media/videos/V/hls/master.m3u8" with exactly one variant "src/playlist.m3u8"
+    Then the Stream Worker writes "af-media/videos/V/hls/src/playlist.m3u8" with 5 segments, "#EXT-X-PLAYLIST-TYPE:VOD" and "#EXT-X-ENDLIST"
+    And writes "af-media/videos/V/hls/master.m3u8" with exactly one variant "src/playlist.m3u8"
     And only after both objects exist is "HLS_INDEX" key "V.src" marked finalized
     And GET "/api/v1/videos/V/hls/src/playlist.m3u8" returns 200 with the content of that object, not a redirect
     And GET "/api/v1/videos/V/hls/master.m3u8" returns 200 and its variant URI resolves to "/api/v1/videos/V/hls/src/playlist.m3u8"
@@ -50,4 +50,4 @@ Feature: Video finalization
     Given video "V" was force-finalized after the idle timeout
     When a "VideoChunkUploaded" event for a new chunk of video "V" is delivered
     Then the static playlist is unchanged and "HLS_INDEX" key "V.src" stays finalized
-    And metric "fp_late_chunks_total" is incremented
+    And metric "af_late_chunks_total" is incremented

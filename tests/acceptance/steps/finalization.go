@@ -297,7 +297,7 @@ func registerFinalization(r Registrar) {
 				return err
 			}
 			// TODO: chunks 0..1 READY, no completion, WatchKey finalized IDLE_TIMEOUT; snapshot
-			// playlist bytes, KV revision and summed fp_late_chunks_total.
+			// playlist bytes, KV revision and summed af_late_chunks_total.
 			return pending(fFin, "force-finalize %s and snapshot state", vid)
 		})
 	r.Step(`^a "VideoChunkUploaded" event for a new chunk of video "([^"]+)" is delivered$`,

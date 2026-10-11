@@ -6,7 +6,7 @@ import (
 
 	"github.com/minio/minio-go/v7/pkg/lifecycle"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 func objectFor(key string) contracts.Object {
@@ -51,13 +51,13 @@ func TestExpirationDaysFrom(t *testing.T) {
 		{ID: "abort-mpu", Status: "Enabled", AbortIncompleteMultipartUpload: lifecycle.AbortIncompleteMultipartUpload{DaysAfterInitiation: 1}},
 	}}
 	if d, err := ExpirationDaysFrom(raw); err != nil || d != 10 {
-		t.Fatalf("fp-raw days = %d, %v", d, err)
+		t.Fatalf("af-raw days = %d, %v", d, err)
 	}
 	media := &lifecycle.Configuration{Rules: []lifecycle.Rule{
 		{ID: "abort-mpu", Status: "Enabled", AbortIncompleteMultipartUpload: lifecycle.AbortIncompleteMultipartUpload{DaysAfterInitiation: 1}},
 	}}
 	if d, err := ExpirationDaysFrom(media); err != nil || d != 0 {
-		t.Fatalf("fp-media days = %d, %v", d, err)
+		t.Fatalf("af-media days = %d, %v", d, err)
 	}
 	if d, _ := ExpirationDaysFrom(nil); d != 0 {
 		t.Fatal("nil config should mean no expiry")

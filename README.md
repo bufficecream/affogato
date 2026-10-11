@@ -1,10 +1,10 @@
-# FramePulse
+# Affogato
 
 A cloud-native, distributed video processing and semantic search pipeline, built to
 explore real-time stream processing, asynchronous AI analysis and vector search with
 **Go, Rust and Python** on **Kubernetes**.
 
-Upload a video and FramePulse:
+Upload a video and Affogato:
 - turns every ~2 s chunk into an HLS segment within seconds (**hot path**), so the video
   plays on demand as soon as the upload is finished;
 - transcribes the speech and indexes it (**cold path**), so you can search *what was
@@ -51,7 +51,7 @@ Upload a video and FramePulse:
 | Serving API | Go (Gin) | Playlists, media redirects (presigned URLs), `/api/v1/search` |
 
 The C1 (system context) and C2 (container) diagrams, including Mermaid versions, are in
-[`framepulse_spec.md` §3](framepulse_spec.md).
+[`affogato_spec.md` §3](affogato_spec.md).
 
 ## Key decisions (MVP)
 
@@ -66,23 +66,23 @@ The C1 (system context) and C2 (container) diagrams, including Mermaid versions,
 - **Kubernetes-only testing.** Acceptance tests run on a local `kind` cluster with the
   same Helm chart as production; unit tests need no infrastructure.
 
-The full list (A1–A20) is in [`framepulse_spec.md` §5](framepulse_spec.md); open ideas
+The full list (A1–A20) is in [`affogato_spec.md` §5](affogato_spec.md); open ideas
 are in §6 *Future Work*.
 
 ## Documentation
 
 | Document | What it covers |
 |---|---|
-| [`framepulse_spec.md`](framepulse_spec.md) | **Start here.** Overview, architecture, C4 diagrams, processing rules, BDD acceptance criteria (7 features), decisions, Future Work |
+| [`affogato_spec.md`](affogato_spec.md) | **Start here.** Overview, architecture, C4 diagrams, processing rules, BDD acceptance criteria (7 features), decisions, Future Work |
 | [`docs/architecture-review.md`](docs/architecture-review.md) | Design review and the normative **data contracts**: protobuf messages, NATS streams/consumers/KV, headers, MinIO keys, Qdrant schema, repo layout, CI |
 | [`docs/test-plan.md`](docs/test-plan.md) | Test strategy per layer, scenario traceability matrix, gaps and security tests |
 | [`tests/README.md`](tests/README.md) | **How to run the tests** |
-| [`docs/framepulse_spec.v1.md`](docs/framepulse_spec.v1.md) | Original spec, kept for reference |
+| [`docs/affogato_spec.v1.md`](docs/affogato_spec.v1.md) | Original spec, kept for reference |
 
 ## Repository layout
 
 ```
-framepulse_spec.md        spec (source of truth for behaviour)
+affogato_spec.md        spec (source of truth for behaviour)
 docs/                     architecture review + contracts, test plan, v1 spec
 tests/
   acceptance/             Go module: godog BDD suite, step definitions, test helpers
@@ -96,7 +96,7 @@ tests/
 Planned (from the contracts doc, not created yet): `proto/` (buf module), `gen/`
 (generated Go/Rust/Python code), `contracts/` (NATS/Qdrant config, golden test data),
 `libs/` (per-language contract helpers), `services/` (producer, serving-api,
-stream-worker, ai-worker) and `deploy/helm/framepulse`.
+stream-worker, ai-worker) and `deploy/helm/affogato`.
 
 ## Getting started
 

@@ -46,7 +46,7 @@ func (r ExecRunner) Run(ctx context.Context, args ...string) ([]byte, error) {
 	return out, nil
 }
 
-// Workload is a scalable resource such as "deployment/framepulse-ai-worker".
+// Workload is a scalable resource such as "deployment/affogato-ai-worker".
 type Workload struct {
 	Kind string // deployment | statefulset
 	Name string
@@ -180,7 +180,7 @@ func (i *Injector) waitZero(ctx context.Context, w Workload) error {
 // WaitReady blocks until every Deployment is Available and every non-terminated pod in the
 // namespace is Ready (Background step). Terminated pods never become Ready and are
 // excluded: Succeeded Job pods (stream/KV init, NACK) and Failed ones, e.g. a previous
-// failed fp-acceptance-load run kept for ttlSecondsAfterFinished in the same namespace.
+// failed af-acceptance-load run kept for ttlSecondsAfterFinished in the same namespace.
 func (i *Injector) WaitReady(ctx context.Context) error {
 	timeout := "--timeout=" + i.rolloutTimeout.String()
 	if _, err := i.kubectl(ctx, "wait", "deployment", "--all", "--for=condition=Available", timeout); err != nil {

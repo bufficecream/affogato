@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # Runs the acceptance image as an in-cluster Job, streams its logs and exits with the
 # Job's result. Usage: run-job.sh IMAGE TAGS [JOB_NAME]
-#   IMAGE     e.g. framepulse/acceptance:dev (already `kind load`ed)
+#   IMAGE     e.g. affogato/acceptance:dev (already `kind load`ed)
 #   TAGS      godog tag expression, e.g. '~@load' or '@load'
-# Env: NAMESPACE (framepulse), GODOG_STRICT (false), KUBECTL (kubectl), WAIT_START (300s)
+# Env: NAMESPACE (affogato), GODOG_STRICT (false), KUBECTL (kubectl), WAIT_START (300s)
 set -euo pipefail
 
 image=${1:?image}
 tags=${2:?tags}
-job=${3:-fp-acceptance}
-ns=${NAMESPACE:-framepulse}
+job=${3:-af-acceptance}
+ns=${NAMESPACE:-affogato}
 strict=${GODOG_STRICT:-false}
 kubectl=${KUBECTL:-kubectl}
 here=$(cd "$(dirname "$0")" && pwd)

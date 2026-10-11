@@ -17,7 +17,7 @@ dir=${1:-"$here/media"}
 [ -d "$dir" ] || { echo "error: $dir does not exist; run make_fixtures.sh first" >&2; exit 1; }
 dir=$(cd "$dir" && pwd)
 
-if [ -z "${FP_IN_FFMPEG_CONTAINER:-}" ] && [ -z "${FFMPEG:-}" ] &&
+if [ -z "${AF_IN_FFMPEG_CONTAINER:-}" ] && [ -z "${FFMPEG:-}" ] &&
    { [ "${FIXTURES_DOCKER:-0}" = 1 ] || ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; }; then
   command -v docker >/dev/null 2>&1 || { echo "error: neither ffmpeg nor docker found" >&2; exit 1; }
   FFMPEG_DOCKER_MOUNTS=$dir exec "$here/../ffmpeg-docker.sh" bash "$here/verify_fixtures.sh" "$dir"

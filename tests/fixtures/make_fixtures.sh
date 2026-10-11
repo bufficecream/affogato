@@ -36,7 +36,7 @@ speech_src=${SPEECH_SRC:-}
 # No ffmpeg on the host (and no FFMPEG override)? Re-run this whole script once inside the
 # pinned ffmpeg container (tests/ffmpeg-docker.sh): one container instead of one per call.
 # FIXTURES_DOCKER=1 forces the container even when a host ffmpeg exists.
-if [ -z "${FP_IN_FFMPEG_CONTAINER:-}" ] && [ -z "${FFMPEG:-}" ] &&
+if [ -z "${AF_IN_FFMPEG_CONTAINER:-}" ] && [ -z "${FFMPEG:-}" ] &&
    { [ "${FIXTURES_DOCKER:-0}" = 1 ] || ! command -v ffmpeg >/dev/null 2>&1 || ! command -v ffprobe >/dev/null 2>&1; }; then
   wrapper="$here/../ffmpeg-docker.sh"
   command -v docker >/dev/null 2>&1 || { echo "error: neither ffmpeg nor docker found" >&2; exit 1; }

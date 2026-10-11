@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/framepulse/framepulse/tests/acceptance/internal/contracts"
+	"github.com/affogato/affogato/tests/acceptance/internal/contracts"
 )
 
 const fFail = "F4 failures"
@@ -77,8 +77,8 @@ func registerFailures(r Registrar) {
 		func(ctx context.Context) error {
 			// TODO: DeadLetter.original_subject/headers/payload equal the published message
 			// (fetch it from VIDEO_EVENTS by original_stream_seq with GetMsg and compare bytes).
-			// Headers include Nats-Msg-Id, Fp-Schema and, when the scenario published with a
-			// fault hook, Fp-Test-Fault verbatim (B1: original_headers keep it).
+			// Headers include Nats-Msg-Id, Af-Schema and, when the scenario published with a
+			// fault hook, Af-Test-Fault verbatim (B1: original_headers keep it).
 			return pending(fFail, "DeadLetter carries the original message verbatim")
 		})
 	r.Step(`^the Stream Worker still produces "ChunkHlsReady" for chunk (\d+)$`,
@@ -93,8 +93,8 @@ func registerFailures(r Registrar) {
 			if err != nil {
 				return err
 			}
-			// TODO (spec 2.5 fault hook, needs FP_TEST_FAULTS=1 from values-kind.yaml):
-			//  1. inj.DeploymentEnv(AI worker, "FP_TEST_FAULTS") == "1", else fail clearly;
+			// TODO (spec 2.5 fault hook, needs AF_TEST_FAULTS=1 from values-kind.yaml):
+			//  1. inj.DeploymentEnv(AI worker, "AF_TEST_FAULTS") == "1", else fail clearly;
 			//  2. inj.VerifyHealthyOnRestore(AI worker) so the After hook waits for a healthy
 			//     rollout even if the scenario fails mid-loop; pin KEDA (PauseKEDA) at the
 			//     current replica count so restarts do not trigger scaling;
@@ -120,7 +120,7 @@ func registerFailures(r Registrar) {
 				return fmt.Errorf("delivery %d / delivery_count %d: want 6 / 6 (dead-lettered on receipt, A19)", n, count)
 			}
 			// TODO: DeadLetter on dlq.ai-indexer.V: ERROR_CLASS_RETRIES_EXHAUSTED,
-			// delivery_count == 6, original_headers still carry Fp-Test-Fault verbatim; no
+			// delivery_count == 6, original_headers still carry Af-Test-Fault verbatim; no
 			// 6th restart (PodRestarts unchanged after the DeadLetter: the cap check runs
 			// before the hook); WaitAckFloor passes the message; no ChunkTranscriptIndexed.
 			return pending(fFail, "DLQ'd on receipt at delivery %d with delivery_count %d, then terminated", n, count)
@@ -132,25 +132,25 @@ func registerFailures(r Registrar) {
 			// outage: PublishWithFault("fail-transient; consumer=ai-indexer") -> 5 attempts,
 			// DLQ RETRIES_EXHAUSTED (~2 min of AI backoff), no scaling needed; Qdrant stays
 			// available. Because the fault is unlimited, a redriven message is only indexed if
-			// fpctl strips Fp-Test-Fault (B1), which makes the next steps a strip check too.
+			// afctl strips Af-Test-Fault (B1), which makes the next steps a strip check too.
 			return pending(fFail, "create dead letters for %s, restore Qdrant", consumer)
 		})
 	r.Step(`^the operator runs "([^"]+)"$`,
 		func(ctx context.Context, command string) error {
 			args := strings.Fields(command)
-			if len(args) == 0 || args[0] != "fpctl" {
-				return fmt.Errorf("only fpctl commands are allowed, got %q", command)
+			if len(args) == 0 || args[0] != "afctl" {
+				return fmt.Errorf("only afctl commands are allowed, got %q", command)
 			}
-			// TODO: exec Cfg.FpctlBin args[1:] (no shell) with NATS creds; capture output.
+			// TODO: exec Cfg.AfctlBin args[1:] (no shell) with NATS creds; capture output.
 			// Scope risk: --since 1h redrives other scenarios' dead letters too; add a
-			// --video-id filter to fpctl or run this scenario in isolation.
+			// --video-id filter to afctl or run this scenario in isolation.
 			return pending(fFail, "run %v", args)
 		})
 	r.Step(`^the original payloads are republished to their original subjects$`,
 		func(ctx context.Context) error {
 			// TODO: WaitFor msg-id "{orig}:redrive:1" on the original subject with identical
 			// payload bytes and headers, except Nats-Msg-Id ({orig}:redrive:n) and
-			// Fp-Test-Fault, which must be absent (redrive strips it, spec 2.5).
+			// Af-Test-Fault, which must be absent (redrive strips it, spec 2.5).
 			return pending(fFail, "redriven messages on original subjects with Msg-Id {orig}:redrive:n")
 		})
 	r.Step(`^each affected chunk is eventually indexed exactly once$`,
