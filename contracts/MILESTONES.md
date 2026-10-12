@@ -15,7 +15,7 @@ Host tools: `buf` (`brew install bufbuild/buf/buf`), Go (host or `tests/go-docke
 
 ## C1. Proto module and generated code
 
-**Status:** planned · **Depends on:** — · **Parallel with:** C3, H0, AI0
+**Status:** done 2026-10-13 (branch `feat/c1-proto-codegen`) · **Depends on:** — · **Parallel with:** C3, H0, AI0
 
 **Goal:** the six proto packages compile, pass lint, and the generated code is committed and
 builds in all three languages.
@@ -46,6 +46,93 @@ python -I -c "import affogato.events.v1.chunk_events_pb2"   # inside the libs/py
 
 **Report includes:** the list of messages and enums per package; any change against B1 (should
 be none) and why.
+
+### C1 Proto module and generated code: done 2026-10-13
+
+**Implemented:**
+- `buf.yaml` (v2, module `proto`, lint STANDARD, breaking FILE) and `buf.gen.yaml` (remote
+  plugins pinned to exact versions) at the repository root.
+- `proto/affogato/*/v1/*.proto`, 7 files, 6 packages:
+
+  | Package | File | Messages | Enums |
+  |---|---|---|---|
+  | `affogato.common.v1` | `common.proto` | `ChunkRef`, `ObjectRef`, `TimeRange`, `MediaInfo`, `EventMeta` | — |
+  | `affogato.events.v1` | `chunk_events.proto` | `VideoChunkUploaded` (`reserved "is_last"`), `ChunkHlsReady`, `ChunkTranscriptIndexed` | `IndexOutcome` |
+  | `affogato.events.v1` | `video_events.proto` | `VideoIngestCompleted` | — |
+  | `affogato.dlq.v1` | `dead_letter.proto` | `Header`, `DeadLetter` | `ErrorClass` |
+  | `affogato.state.v1` | `hls_index.proto` | `HlsIndex`, `Segment` (`reserved 2; reserved "key";`) | `FinalizeReason`, `SegmentStatus` |
+  | `affogato.artifacts.v1` | `transcript.proto` | `Transcript`, `TranscriptSegment` | — |
+  | `affogato.embed.v1` | `embed.proto` | `EmbedRequest`, `EmbedResponse`, `Vector` | `Purpose` |
+
+  Every enum's zero value is `*_UNSPECIFIED`; `go_package` = `github.com/affogato/affogato/gen/go/affogato/<pkg>/v1;<pkg>v1`.
+- `gen/go`: module `github.com/affogato/affogato/gen/go` (`go.mod`, `go.sum`), 7 `*.pb.go`.
+- `gen/rust`: crate `af-proto` (`Cargo.toml`, committed `Cargo.lock`), `src/lib.rs` plus one
+  file per package; `use af_proto::affogato::events::v1::VideoChunkUploaded`.
+- `gen/python`: dist `affogato-contracts` (`pyproject.toml`, hatchling), `src/affogato/**/*_pb2.py`
+  and `.pyi`; `affogato` is an implicit namespace package.
+- Each `gen/*` has a README saying "generated, do not edit, regenerate with `make contracts-gen`".
+- Root `Makefile`: `contracts-gen` (removes old generated files, then `buf generate`) and
+  `contracts-check` (format, lint, generate, `git diff --exit-code gen/` plus an untracked-file
+  check, `go build`/`go vet`, `cargo build --locked`, venv install and import of all 7 Python
+  modules). Root `.gitignore` for `/.venv/`, `/gen/rust/target/`, `__pycache__/`.
+
+**Verified** (run 1 in the development worktree; run 2 on the committed branch after
+`git clean -xdf` removed the venv and `gen/rust/target/`, with `GO=tests/go-docker.sh`;
+shared Go/cargo/pip download caches were kept):
+- `buf format --diff --exit-code`: no diff, exit 0 (both runs).
+- `buf lint`: clean, exit 0 (both runs).
+- `buf generate && git diff --exit-code gen/`: exit 0, 36 committed files reproduced
+  byte-identically (both runs).
+- `(cd gen/go && go build ./...)`: exit 0 (run 1 host go1.27.2 and `tests/go-docker.sh`
+  golang:1.26; run 2 `tests/go-docker.sh`); `go vet ./...` clean.
+- `cargo build --manifest-path gen/rust/Cargo.toml`: `Finished dev profile`, no warnings
+  (both runs); additionally `cargo clippy` clean and `cargo test` 0 tests / 0 doctests failing.
+- `python -I -c "import affogato.events.v1.chunk_events_pb2"`: exit 0 in the venv with
+  `affogato-contracts 0.1.0` and `protobuf 7.36.2` (both runs); all 7 modules import.
+- `make contracts-check`: `contracts-check: OK` (both runs).
+- Deliberate failure: a proto comment edited without regenerating makes `make contracts-check`
+  stop at `git diff --exit-code -- gen/` (exit 2).
+- Already green: `make -C tests unit acceptance-dry GO="$PWD/tests/go-docker.sh"`: all unit
+  packages ok; 25 scenarios (25 pending), 150 steps (25 pending, 125 skipped), unchanged.
+
+**Acceptance:** no scenario changes (contracts only).
+
+**Deviations:**
+- None in field numbers, names or types against B1. B1's abbreviated "supporting contracts"
+  (`state`, `artifacts`, `embed`) are written out with the listed fields and numbers; the added
+  comments only restate the spec (key, writer/reader, finalization rules).
+- B1's note "Field 3 is held for `tenant_id`" in `ChunkRef` stays a comment, as in B1; it is
+  not a `reserved 3` (that would make a later `tenant_id = 3` a breaking change under FILE).
+- Python verify uses a git-ignored venv at the repository root (`PY_VENV`, default `.venv`)
+  instead of the `libs/python` venv, which does not exist until C4; C4 can point `PY_VENV` at
+  its own venv. The host interpreter is Python 3.14 (`PYTHON`, default `python3`), not 3.12;
+  the package requires `>=3.10` (protobuf 7).
+
+**Decisions made:**
+- buf CLI: container `bufbuild/buf:1.73.0` (released 2026-09-11) via `BUF ?=` in the
+  `Makefile`, run as the host uid/gid; override with `BUF=buf` (a host buf must be 1.73.0, or
+  format/generate output may differ). `GO` defaults to host `go` when present, else
+  `tests/go-docker.sh`.
+- Remote BSR plugins, exact versions, no local plugin installs: `protocolbuffers/go:v1.36.12`
+  (`paths=source_relative`, default open struct API), `community/neoeinstein-prost:v0.5.0`
+  (`bytes=.`, so `DeadLetter.original_payload` is `bytes::Bytes` like async-nats payloads),
+  `community/neoeinstein-prost-crate:v0.5.0` (`no_features`, `include_file=lib.rs`),
+  `protocolbuffers/python:v36.2` and `protocolbuffers/pyi:v36.2`.
+- Runtime pins that match the plugins: `google.golang.org/protobuf v1.36.12`; `prost` /
+  `prost-types` `0.14.1` (resolved to 0.14.4 in `Cargo.lock`); `protobuf>=7.36.2,<8` (the
+  generated Python checks the runtime version on import). Build backend `hatchling==1.27.0`.
+- `buf.gen.yaml` does not use `clean: true` (it would delete the hand-written `go.mod`,
+  `Cargo.toml`, `pyproject.toml`); `make contracts-gen` deletes only generated files first.
+- The Python plugin stamps "NO CHECKED-IN PROTOBUF GENCODE" in each `_pb2.py`; that is
+  upstream's default advice, and the code is committed anyway as B4 and this milestone require.
+
+**Open issues / next:**
+- `buf breaking --against '.git#branch=main,subdir=proto'` is not in `contracts-check`, because
+  `main` has no `proto/` yet; C5 (CI) adds it once C1 is merged.
+- No `py.typed` marker yet, so mypy treats the installed `affogato-contracts` as untyped and
+  ignores its `.pyi` stubs. `affogato` is a namespace package, so the marker belongs in the
+  `v1` subpackages; C4 adds it when it wires the package into `libs/python`.
+- C2 (golden data, `keys.json`) builds on these messages next.
 
 ---
 
