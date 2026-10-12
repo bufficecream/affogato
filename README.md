@@ -76,6 +76,7 @@ are in §6 *Future Work*.
 | [`affogato_spec.md`](affogato_spec.md) | **Start here.** Overview, architecture, C4 diagrams, processing rules, BDD acceptance criteria (7 features), decisions, Future Work |
 | [`docs/architecture-review.md`](docs/architecture-review.md) | Design review and the normative **data contracts**: protobuf messages, NATS streams/consumers/KV, headers, MinIO keys, Qdrant schema, repo layout, CI |
 | [`docs/test-plan.md`](docs/test-plan.md) | Test strategy per layer, scenario traceability matrix, gaps and security tests |
+| [`docs/implementation-plan.md`](docs/implementation-plan.md) | **Development milestones:** order, parallel tracks, decisions needed, definition of done, report format; links to each module's `MILESTONES.md` |
 | [`tests/README.md`](tests/README.md) | **How to run the tests** |
 | [`docs/affogato_spec.v1.md`](docs/affogato_spec.v1.md) | Original spec, kept for reference |
 
@@ -130,6 +131,9 @@ Three Claude Code agents are defined in `.claude/agents/`:
 | `developer` | Implements features and fixes to spec |
 
 ## Roadmap
+
+The detailed, verifiable milestones for each step are in
+[`docs/implementation-plan.md`](docs/implementation-plan.md).
 
 1. **Contracts:** `proto/` + `buf` lint/breaking, generated code, NATS stream/consumer
    config, golden `keys.json`.
