@@ -1,0 +1,33 @@
+syntax = "proto3";
+
+package affogato.embed.v1;
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/embed/v1;embedv1";
+
+// Subject:    svc.embed.v1.embed (core NATS request-reply, not stored)
+// Caller:     serving-api (search queries). Responder: embedder.
+// Callers send unprefixed text. The shared embedding module prepends "query: "
+// (PURPOSE_QUERY) or "passage: " (PURPOSE_PASSAGE) as e5 requires.
+message EmbedRequest {
+  repeated string texts = 1;
+  // PURPOSE_UNSPECIFIED is rejected.
+  Purpose purpose = 2;
+}
+
+enum Purpose {
+  PURPOSE_UNSPECIFIED = 0;
+  PURPOSE_QUERY = 1; // search query, prefixed "query: "
+  PURPOSE_PASSAGE = 2; // indexed text, prefixed "passage: "
+}
+
+// The caller checks that model matches the model of the collection it searches.
+message EmbedResponse {
+  string model = 1; // e.g. "intfloat/multilingual-e5-small"
+  uint32 dim = 2; // vector dimension, 384 for multilingual-e5-small
+  // One vector per request text, in request order.
+  repeated Vector vectors = 3;
+}
+
+message Vector {
+  repeated float values = 1;
+}

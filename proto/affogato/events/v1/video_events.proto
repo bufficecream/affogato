@@ -1,0 +1,17 @@
+syntax = "proto3";
+
+package affogato.events.v1;
+
+import "affogato/common/v1/common.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/events/v1;eventsv1";
+
+// Subject:     video.lifecycle.completed.{video_id}
+// Nats-Msg-Id: completed:{video_id}
+// Publisher:   producer, after the PubAck of the last VideoChunkUploaded.
+message VideoIngestCompleted {
+  affogato.common.v1.EventMeta meta = 1;
+  string video_id = 2;
+  uint32 chunk_count = 3; // chunks 0..chunk_count-1
+  affogato.common.v1.TimeRange media_time = 4; // whole video
+}

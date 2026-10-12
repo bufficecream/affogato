@@ -1,0 +1,53 @@
+syntax = "proto3";
+
+package affogato.state.v1;
+
+import "affogato/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/state/v1;statev1";
+
+// KV bucket:  HLS_INDEX (history 1, max_value_size 1 MiB)
+// Key:        {video_id}.{rendition}
+// Writer:     stream-worker, compare-and-swap on every segment and at finalization.
+// Readers:    serving-api (playlist 404 / 409 / 200 decision), stream-worker idle sweeper.
+// Each CAS rewrites the whole value; keep per-segment entries small (see Segment).
+message HlsIndex {
+  string video_id = 1;
+  string rendition = 2; // "src" in MVP
+  // One entry per processed chunk, sorted by chunk_seq ascending, no duplicates.
+  repeated Segment segments = 3;
+  // chunk_count from VideoIngestCompleted; 0 = unknown (completion not seen yet).
+  uint32 expected_chunk_count = 4;
+  // Set once, after the final playlists (if any) were written. Never cleared.
+  bool finalized = 5;
+  // Stamped on every update; drives the idle-timeout finalization.
+  google.protobuf.Timestamp last_activity_at = 6;
+  // Why the index was finalized; FINALIZE_REASON_UNSPECIFIED while not finalized.
+  FinalizeReason finalize_reason = 7;
+}
+
+enum FinalizeReason {
+  FINALIZE_REASON_UNSPECIFIED = 0;
+  FINALIZE_REASON_COMPLETED = 1; // VideoIngestCompleted seen and every chunk accounted for
+  FINALIZE_REASON_IDLE_TIMEOUT = 2; // no activity for FINALIZE_IDLE_TIMEOUT; missing or pending chunks count as FAILED
+}
+
+// One HLS segment of a rendition. Budget: <= 19 bytes encoded, so an 8,000-chunk
+// video stays far below max_value_size. The object key is not stored; it is derived
+// as videos/{video_id}/hls/{rendition}/{seq6}.ts by the contracts libraries.
+message Segment {
+  uint32 chunk_seq = 1;
+  // Former object key, removed to keep the entry within the size budget.
+  reserved 2;
+  reserved "key";
+  // Measured PTS range of the output segment (authoritative for EXTINF).
+  affogato.common.v1.TimeRange media_time = 3;
+  SegmentStatus status = 4;
+}
+
+enum SegmentStatus {
+  SEGMENT_STATUS_UNSPECIFIED = 0;
+  SEGMENT_STATUS_READY = 1; // segment and thumbnail written, playable
+  SEGMENT_STATUS_FAILED = 2; // processing failed (dead-lettered); omitted from the playlist
+}
