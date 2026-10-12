@@ -1,0 +1,17 @@
+{
+  "durable_name": "hls-stream-worker",
+  "description": "Stream Worker hot path: remux to HLS, thumbnails, finalization. ack_wait 15s covers the 10s ffmpeg timeout. architecture-review.md B1.",
+  "filter_subjects": [
+    "video.chunks.uploaded.*",
+    "video.lifecycle.completed.*"
+  ],
+  "deliver_policy": "all",
+  "ack_policy": "explicit",
+  "ack_wait": 15000000000,
+  "max_deliver": 10,
+  "max_ack_pending": 512,
+  "replay_policy": "instant",
+  "metadata": {
+    "affogato.stream": "VIDEO_EVENTS"
+  }
+}

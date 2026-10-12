@@ -1,0 +1,16 @@
+{
+  "durable_name": "ai-indexer",
+  "description": "AI Worker cold path: audio, Whisper STT, embeddings into Qdrant. ack_wait 60s covers the 45s pipeline timeout; longer runs send AckProgress every 15s. architecture-review.md B1.",
+  "filter_subjects": [
+    "video.chunks.uploaded.*"
+  ],
+  "deliver_policy": "all",
+  "ack_policy": "explicit",
+  "ack_wait": 60000000000,
+  "max_deliver": 10,
+  "max_ack_pending": 32,
+  "replay_policy": "instant",
+  "metadata": {
+    "affogato.stream": "VIDEO_EVENTS"
+  }
+}
