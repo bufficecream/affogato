@@ -1,0 +1,31 @@
+{
+  "collection_name": "transcripts_me5s384_v1",
+  "collection": {
+    "vectors": {
+      "size": 384,
+      "distance": "Cosine"
+    },
+    "on_disk_payload": true,
+    "metadata": {
+      "embedding_model": "intfloat/multilingual-e5-small"
+    }
+  },
+  "payload_indexes": [
+    {
+      "field_name": "video_id",
+      "field_schema": "keyword"
+    },
+    {
+      "field_name": "chunk_seq",
+      "field_schema": "integer"
+    },
+    {
+      "field_name": "start_ms",
+      "field_schema": "integer"
+    },
+    {
+      "field_name": "language",
+      "field_schema": "keyword"
+    }
+  ]
+}
