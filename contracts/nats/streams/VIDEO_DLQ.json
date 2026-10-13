@@ -1,0 +1,18 @@
+{
+  "name": "VIDEO_DLQ",
+  "description": "Dead letters republished by the workers on dlq.{consumer}.{video_id}. discard new: a full DLQ rejects the publish and the worker NAKs instead of losing the message. architecture-review.md B1.",
+  "subjects": [
+    "dlq.>"
+  ],
+  "retention": "limits",
+  "storage": "file",
+  "num_replicas": 3,
+  "max_age": 604800000000000,
+  "max_bytes": 1073741824,
+  "max_msg_size": 262144,
+  "discard": "new",
+  "duplicate_window": 600000000000,
+  "deny_delete": true,
+  "deny_purge": false,
+  "allow_direct": true
+}

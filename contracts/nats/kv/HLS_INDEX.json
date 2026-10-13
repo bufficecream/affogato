@@ -1,0 +1,8 @@
+{
+  "bucket": "HLS_INDEX",
+  "description": "Per-rendition HLS segment index, key {video_id}.{rendition}, value affogato.state.v1.HlsIndex (<= ~152 KB at the 8,000-chunk cap). architecture-review.md B1.",
+  "history": 1,
+  "max_value_size": 1048576,
+  "storage": "file",
+  "replicas": 3
+}

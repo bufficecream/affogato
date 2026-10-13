@@ -170,7 +170,7 @@ python -I -m jsonschema -i contracts/testdata/keys.json contracts/testdata/keys.
 
 ## C3. NATS and Qdrant configuration
 
-**Status:** planned · **Depends on:** — · **Parallel with:** C1, C2
+**Status:** done 2026-10-13 · **Depends on:** — · **Parallel with:** C1, C2
 
 **Goal:** the stream, consumer, KV and collection definitions exist as files that the Helm
 chart (H1) applies unchanged, and they are proven valid against real servers.
@@ -199,6 +199,98 @@ and the DLQ age shorter than the planned `af-raw` expiry (10 d, set in H1).
 
 **Report includes:** each file and the server's read-back result; any setting the server
 normalised or rejected.
+
+### C3 NATS and Qdrant configuration: done 2026-10-13
+**Implemented:**
+- `contracts/nats/streams/{VIDEO_EVENTS,VIDEO_DLQ,AF_ADVISORIES}.json`: server `StreamConfig`
+  JSON (`nats stream add --config`), values from the B1 table, durations in nanoseconds,
+  `num_replicas` 3.
+- `contracts/nats/consumers/{hls-stream-worker,ai-indexer}.json`: server `ConsumerConfig`; the
+  stream is named in `metadata."affogato.stream"` because `ConsumerConfig` has no stream field.
+- `contracts/nats/kv/HLS_INDEX.json`: `KeyValueConfig` (nats.go `jetstream`), history 1,
+  `max_value_size` 1 MiB, file, replicas 3.
+- `contracts/qdrant/transcripts_me5s384_v1.json` (`collection_name`, `collection` = create
+  body, `payload_indexes` = index bodies) and `contracts/qdrant/aliases.json` (the
+  `POST /collections/aliases` body: `transcripts` → `transcripts_me5s384_v1`).
+- `contracts/nats/README.md`, `contracts/qdrant/README.md`: file shapes, idempotent apply
+  commands, server-JSON → NACK CRD field mapping (for H1).
+- `contracts/check-config.sh`: throwaway `nats -js`, Qdrant and nats-box containers on a
+  private network (random suffix, no host ports, image refs `tag@digest` from
+  `tests/kind/images.txt`). It applies every file twice, compares every field the file sets
+  with the server read-back, checks Feature 7 retention and that `AF_ADVISORIES` captures a
+  real MAX_DELIVERIES advisory, then removes everything (EXIT trap).
+
+**Verified:**
+- `contracts/check-config.sh` run 1: `SUMMARY: 19 passed, 0 failed`, exit 0, ~10 s; run 2
+  right after: identical output apart from the random suffix, exit 0. After each run,
+  `docker ps -a --filter name=af-c3check` and `docker network ls --filter name=af-c3check`
+  list nothing.
+- Read-back per file (applied with replicas 1, the rest unchanged):
+
+  | File | Server read-back |
+  |---|---|
+  | `streams/VIDEO_EVENTS.json` | 15 fields equal (s2, 7d, 10 GiB, 64 KiB, old, 10m, deny_delete, allow_direct) |
+  | `streams/VIDEO_DLQ.json` | 14 fields equal (7d, 1 GiB, 256 KiB, **new**, 10m, deny_delete, allow_direct) |
+  | `streams/AF_ADVISORIES.json` | 11 fields equal (7d, 100 MiB, max_msg_size -1, old, 2m); probe advisory `$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.VIDEO_EVENTS.c3-probe` captured |
+  | `consumers/hls-stream-worker.json` | 10 fields equal (2 filters, all, explicit, 15s, 10, 512) |
+  | `consumers/ai-indexer.json` | 10 fields equal (1 filter, all, explicit, 60s, 10, 32) |
+  | `kv/HLS_INDEX.json` | 6 fields equal via stream `KV_HLS_INDEX` (history = `max_msgs_per_subject` 1, `max_value_size` = `max_msg_size` 1048576, file) |
+  | `qdrant/transcripts_me5s384_v1.json` | 384 / Cosine, `on_disk_payload` true, metadata, 4 payload indexes equal; HNSW defaults m 16, ef_construct 100, full_scan_threshold 10000 |
+  | `qdrant/aliases.json` | `transcripts -> transcripts_me5s384_v1`; `GET /collections/transcripts` returns the 384-d Cosine config and model |
+
+- Feature 7: `VIDEO_EVENTS`, `VIDEO_DLQ`, `AF_ADVISORIES` `max_age` 7d in file and on server;
+  `VIDEO_DLQ max_age 7d < planned af-raw expiry 10d (H1)`.
+- Mutation run on a scratch copy (DLQ `max_age` 11d, `compression: "none"`, unknown consumer
+  stream, KV replicas 1, Qdrant `"cosine"`): `SUMMARY: 11 passed, 7 failed`, exit 1, every
+  mutation reported, containers removed.
+- `shellcheck` (`koalaman/shellcheck:v0.11.0`, default rules, `-x`): clean, exit 0.
+- `make -C tests unit acceptance-dry GO="$PWD/tests/go-docker.sh"`: 13 packages ok;
+  `25 scenarios (25 pending)`, `--- PASS: TestFeatures`.
+
+**Acceptance:** none newly green. 7.1 also needs the MinIO lifecycle half (H1, ACC1); its NATS
+half is pre-checked here.
+
+**Deviations:**
+- The script applies replicas 1. A single-node server rejects R3 (`replicas > 1 not supported
+  in non-clustered mode`, 10074), the same reason `values-kind.yaml` overrides.
+- Consumers leave `num_replicas` unset (0 = inherit the stream) instead of 3, so they follow the
+  stream's replica override on kind without a second override.
+- `AF_ADVISORIES`: B1 "default" `max_msg_size` written as `-1` (the server default); the "—"
+  fields (`deny_delete`, `deny_purge`, `allow_direct`) are omitted (server default false).
+- Additions beyond the scope list: the two READMEs, the advisory probe, and
+  `collection.metadata.embedding_model` so the alias target's model is visible to the workers'
+  startup check (B3).
+- The status table in `docs/implementation-plan.md` is not updated (outside this task's file
+  scope); C3 should be set to done there.
+
+**Decisions made:**
+- Normalised by the server: `"compression": "none"` reads back as absent, so `VIDEO_DLQ` and
+  `AF_ADVISORIES` omit `compression` (B1 asks S2 only for `VIDEO_EVENTS`). A one-element
+  `filter_subjects` stays `filter_subjects` (not folded into `filter_subject`). The server adds
+  `_nats.*` metadata, `max_waiting` 512, `name` = durable; the KV backing stream gets discard
+  new, `allow_rollup_hdrs`, `deny_delete`, `allow_direct`, duplicate window 2m on its own.
+- Rejected by the server: R3 on a single node (above); Qdrant distance `"cosine"` (lowercase,
+  HTTP 400), seen in the mutation run.
+- Idempotency: `nats stream/consumer/kv add` with an identical config succeeds (a different
+  config fails with 10058, so drift is not silently applied). Qdrant `PUT /collections/{name}`
+  again is 409, so apply means create-if-missing; payload index `PUT` and `create_alias` are
+  repeatable, and `create_alias` re-points an existing alias (atomic model swap).
+- Qdrant `replication_factor`/`shard_number` left unset (B3 is silent; read back 1/1). Integer
+  payload indexes use the default (lookup + range).
+- CLI JSON vs NACK CRD (`jetstream.nats.io/v1beta2`, checked against NACK `deploy/crds.yml`):
+  camelCase everywhere; `num_replicas` → `replicas`; durations ns integers → Go duration
+  strings (`maxAge: 168h`, `duplicateWindow: 10m`, `ackWait: 15s`); consumer stream →
+  `streamName`; NACK stream `storage` defaults to **memory** (server: file), so the chart must
+  always render it. Full table in `contracts/nats/README.md`.
+
+**Open issues / next:**
+- H1: render NACK `Stream`/`Consumer`/`KeyValue` from these files with the mapping above
+  (replicas 1 on kind), and an init Job applying `contracts/qdrant/` as described in its
+  README. Set the `af-raw` expiry to 10 d to match `AF_RAW_EXPIRY_DAYS` in the script.
+- C5: run `contracts/check-config.sh` as a job step (needs Docker; pulls the three pinned
+  images on a clean runner).
+- H3: Qdrant `replication_factor` for production, if Qdrant runs clustered.
+- Not exercised: cleanup after Ctrl-C (INT trap path); the exit-1 path was exercised.
 
 ---
 

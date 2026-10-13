@@ -1,0 +1,15 @@
+{
+  "name": "AF_ADVISORIES",
+  "description": "MAX_DELIVERIES advisories of VIDEO_EVENTS consumers, kept for alerting only (the worker DLQ logic never reads it). architecture-review.md B1.",
+  "subjects": [
+    "$JS.EVENT.ADVISORY.CONSUMER.MAX_DELIVERIES.VIDEO_EVENTS.>"
+  ],
+  "retention": "limits",
+  "storage": "file",
+  "num_replicas": 3,
+  "max_age": 604800000000000,
+  "max_bytes": 104857600,
+  "max_msg_size": -1,
+  "discard": "old",
+  "duplicate_window": 120000000000
+}

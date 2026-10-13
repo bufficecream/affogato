@@ -1,0 +1,10 @@
+{
+  "actions": [
+    {
+      "create_alias": {
+        "collection_name": "transcripts_me5s384_v1",
+        "alias_name": "transcripts"
+      }
+    }
+  ]
+}

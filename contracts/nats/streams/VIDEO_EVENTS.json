@@ -1,0 +1,20 @@
+{
+  "name": "VIDEO_EVENTS",
+  "description": "Pipeline events (chunk uploaded, HLS ready, AI indexed, video lifecycle). The last subject token is always the video_id. architecture-review.md B1.",
+  "subjects": [
+    "video.chunks.>",
+    "video.lifecycle.>"
+  ],
+  "retention": "limits",
+  "storage": "file",
+  "compression": "s2",
+  "num_replicas": 3,
+  "max_age": 604800000000000,
+  "max_bytes": 10737418240,
+  "max_msg_size": 65536,
+  "discard": "old",
+  "duplicate_window": 600000000000,
+  "deny_delete": true,
+  "deny_purge": false,
+  "allow_direct": true
+}
