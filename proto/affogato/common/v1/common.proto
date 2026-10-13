@@ -1,0 +1,65 @@
+syntax = "proto3";
+
+package affogato.common.v1;
+
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/common/v1;commonv1";
+
+// Design note: video_id is a plain string (no wrapper message) to avoid
+// Option<VideoId> / HasField friction in prost and Python. Format rule:
+// lowercase canonical UUIDv7, 36 chars, e.g. "0192f3a4-7b1c-7d2e-9f00-1a2b3c4d5e6f".
+
+// Identifies one chunk of one video.
+message ChunkRef {
+  string video_id = 1;
+  // 0-based, contiguous, assigned by the producer, unique within video_id.
+  uint32 chunk_seq = 2;
+  // Field 3 is held for tenant_id (spec A9 and Future Work). Do not use it for anything else.
+}
+
+// Location-independent pointer to an S3/MinIO object. Never contains an
+// endpoint or URL; readers resolve the endpoint from their own config.
+message ObjectRef {
+  string bucket = 1;
+  string key = 2;
+  int64 size_bytes = 3;
+  string content_type = 4;
+  // Lowercase hex SHA-256 of the full body. Empty if not computed.
+  string sha256_hex = 5;
+  // ETag returned by PUT. Informational only (multipart ETags are not MD5).
+  string etag = 6;
+}
+
+// Half-open media-time interval [start_ms, end_ms) relative to the first
+// frame of chunk 0 of the video. Not wall-clock time.
+message TimeRange {
+  int64 start_ms = 1;
+  int64 end_ms = 2;
+}
+
+// Result of ffprobe on a chunk.
+message MediaInfo {
+  string container = 1; // "mpegts"
+  string video_codec = 2; // "h264"
+  string audio_codec = 3; // "aac"; empty if no audio
+  uint32 width = 4;
+  uint32 height = 5;
+  uint32 frame_rate_num = 6;
+  uint32 frame_rate_den = 7;
+  bool has_audio = 8;
+  uint32 audio_sample_rate_hz = 9;
+  uint32 audio_channels = 10;
+  uint64 bitrate_bps = 11;
+}
+
+// Envelope metadata present as field 1 of every event.
+message EventMeta {
+  // UUIDv7, generated once per logical event and reused on publish retries.
+  string event_id = 1;
+  google.protobuf.Timestamp occurred_at = 2;
+  string producer = 3; // service name, e.g. "stream-worker"
+  string producer_version = 4; // semver or git sha
+  // event_id of the event that caused this one; empty for root events.
+  string causation_id = 5;
+}

@@ -1,0 +1,28 @@
+# Code generation for the Affogato contracts. Run `make contracts-gen`; never edit gen/ by hand.
+# Remote plugins are pinned to exact versions, and each runtime is pinned to match:
+#   protocolbuffers/go v1.36.12      -> google.golang.org/protobuf v1.36.12  (gen/go/go.mod)
+#   neoeinstein-prost v0.5.0         -> prost / prost-types 0.14.1            (gen/rust/Cargo.toml)
+#   protocolbuffers/python+pyi v36.2 -> protobuf 7.36.2                       (gen/python/pyproject.toml)
+version: v2
+plugins:
+  - remote: buf.build/protocolbuffers/go:v1.36.12
+    out: gen/go
+    opt:
+      - paths=source_relative
+  - remote: buf.build/community/neoeinstein-prost:v0.5.0
+    out: gen/rust/src
+    # One file per package (affogato/common/v1/affogato.common.v1.rs, ...), included by lib.rs.
+    opt:
+      # bytes fields (DeadLetter.original_payload) as bytes::Bytes, the payload type of async-nats.
+      - bytes=.
+  - remote: buf.build/community/neoeinstein-prost-crate:v0.5.0
+    out: gen/rust/src
+    # Remote plugins receive every file in one request, which the include file needs.
+    opt:
+      # Plain lib.rs without per-package cargo features; Cargo.toml is maintained by hand.
+      - no_features
+      - include_file=lib.rs
+  - remote: buf.build/protocolbuffers/python:v36.2
+    out: gen/python/src
+  - remote: buf.build/protocolbuffers/pyi:v36.2
+    out: gen/python/src

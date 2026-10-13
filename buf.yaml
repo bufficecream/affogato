@@ -1,0 +1,11 @@
+# Buf workspace for the Affogato contracts.
+# Rules: docs/architecture-review.md B1 "Evolution rules" and B4 "Repo layout and codegen".
+version: v2
+modules:
+  - path: proto
+lint:
+  use:
+    - STANDARD
+breaking:
+  use:
+    - FILE

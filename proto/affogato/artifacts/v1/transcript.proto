@@ -1,0 +1,31 @@
+syntax = "proto3";
+
+package affogato.artifacts.v1;
+
+import "affogato/common/v1/common.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/artifacts/v1;artifactsv1";
+
+// Object:     af-media/videos/{video_id}/transcripts/{seq6}.json
+// Encoding:   canonical proto3 JSON, Content-Type application/json, write-once.
+// Writer:     ai-worker, before the Qdrant upsert and ChunkTranscriptIndexed.
+message Transcript {
+  affogato.common.v1.ChunkRef chunk = 1;
+  // Media time of the whole chunk (video-relative).
+  affogato.common.v1.TimeRange media_time = 2;
+  string language = 3; // detected by Whisper, BCP-47 ("en", "ja", "zh")
+  string stt_model = 4; // actual model, e.g. "faster-whisper/small/int8"
+  // Full chunk transcript; the text that is embedded and stored in the Qdrant payload.
+  string text = 5;
+  // Whisper segments in time order.
+  repeated TranscriptSegment segments = 6;
+}
+
+// One Whisper segment.
+message TranscriptSegment {
+  // Video-relative media time, not chunk-relative.
+  affogato.common.v1.TimeRange media_time = 1;
+  string text = 2;
+  // Whisper average log probability of the segment's tokens.
+  float avg_logprob = 3;
+}

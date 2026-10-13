@@ -1,0 +1,4 @@
+# Build output and local environments (never committed).
+/.venv/
+/gen/rust/target/
+__pycache__/

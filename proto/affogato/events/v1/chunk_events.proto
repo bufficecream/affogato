@@ -1,0 +1,67 @@
+syntax = "proto3";
+
+package affogato.events.v1;
+
+import "affogato/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/events/v1;eventsv1";
+
+// Subject:     video.chunks.uploaded.{video_id}
+// Nats-Msg-Id: uploaded:{video_id}:{chunk_seq:06}
+// Publisher:   producer. Published only after the raw object PUT succeeded.
+message VideoChunkUploaded {
+  affogato.common.v1.EventMeta meta = 1;
+  affogato.common.v1.ChunkRef chunk = 2;
+  // af-raw/videos/{video_id}/chunks/{seq:06}.ts; sha256_hex is REQUIRED.
+  affogato.common.v1.ObjectRef raw_object = 3;
+  // Measured from source PTS (keyframe-aligned cuts are not exactly 2000 ms).
+  affogato.common.v1.TimeRange media_time = 4;
+  affogato.common.v1.MediaInfo media = 5;
+  // Camera / upload source identifier, free-form, observability only.
+  string source_id = 6;
+  // Wall-clock capture time of first frame if known (cameras); unset for files.
+  google.protobuf.Timestamp captured_at = 7;
+
+  // End-of-video is signalled by VideoIngestCompleted, never per chunk.
+  reserved "is_last";
+}
+
+// Subject:     video.chunks.hls.ready.{video_id}
+// Nats-Msg-Id: hls-ready:{video_id}:{rendition}:{chunk_seq:06}
+// Publisher:   stream-worker, after segment + thumbnail PUT and HLS_INDEX CAS.
+message ChunkHlsReady {
+  affogato.common.v1.EventMeta meta = 1;
+  affogato.common.v1.ChunkRef chunk = 2;
+  string rendition = 3; // "src" in MVP
+  affogato.common.v1.ObjectRef segment = 4;
+  affogato.common.v1.ObjectRef thumbnail = 5;
+  // Actual PTS range of the output segment (authoritative for EXTINF).
+  affogato.common.v1.TimeRange media_time = 6;
+  uint32 processing_ms = 7; // receive -> publish
+}
+
+enum IndexOutcome {
+  INDEX_OUTCOME_UNSPECIFIED = 0;
+  INDEX_OUTCOME_INDEXED = 1; // point upserted
+  INDEX_OUTCOME_NO_SPEECH = 2; // audio present, empty transcript; no point
+  INDEX_OUTCOME_NO_AUDIO = 3; // no audio track; no point, no transcript
+}
+
+// Subject:     video.chunks.ai.indexed.{video_id}
+// Nats-Msg-Id: ai-indexed:{video_id}:{chunk_seq:06}
+// Publisher:   ai-worker, after transcript PUT and Qdrant upsert (wait=true).
+message ChunkTranscriptIndexed {
+  affogato.common.v1.EventMeta meta = 1;
+  affogato.common.v1.ChunkRef chunk = 2;
+  affogato.common.v1.TimeRange media_time = 3;
+  IndexOutcome outcome = 4;
+  affogato.common.v1.ObjectRef transcript = 5; // unset if NO_AUDIO
+  string language = 6; // detected per chunk by Whisper, BCP-47 ("en", "ja", "zh")
+  string stt_model = 7; // actual model, e.g. "faster-whisper/small/int8" (WHISPER_MODEL)
+  string embedding_model = 8; // "intfloat/multilingual-e5-small"
+  string qdrant_collection = 9; // physical name, not alias
+  string point_id = 10; // UUIDv5, see Qdrant section
+  uint32 processing_ms = 11;
+  uint32 transcript_chars = 12;
+}

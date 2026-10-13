@@ -1,0 +1,46 @@
+syntax = "proto3";
+
+package affogato.dlq.v1;
+
+import "affogato/common/v1/common.proto";
+import "google/protobuf/timestamp.proto";
+
+option go_package = "github.com/affogato/affogato/gen/go/affogato/dlq/v1;dlqv1";
+
+enum ErrorClass {
+  ERROR_CLASS_UNSPECIFIED = 0;
+  ERROR_CLASS_INVALID_MEDIA = 1; // corrupt / undecodable / no streams
+  ERROR_CLASS_OBJECT_NOT_FOUND = 2;
+  ERROR_CLASS_CHECKSUM_MISMATCH = 3;
+  ERROR_CLASS_SCHEMA = 4; // undecodable payload / unknown Af-Schema
+  ERROR_CLASS_TIMEOUT = 5; // subprocess/pipeline timeout (permanent after cap)
+  ERROR_CLASS_RETRIES_EXHAUSTED = 6; // transient failure on attempt 5, or received with num_delivered >= 6
+  ERROR_CLASS_INTERNAL = 7;
+}
+
+message Header {
+  string name = 1;
+  repeated string values = 2;
+}
+
+// Subject:     dlq.{consumer}.{video_id|unknown}
+// Nats-Msg-Id: dlq:{consumer}:{original_stream_seq}
+message DeadLetter {
+  affogato.common.v1.EventMeta meta = 1;
+  // Original message, verbatim (enables redrive without re-encoding).
+  string original_stream = 2;
+  uint64 original_stream_seq = 3;
+  string original_subject = 4;
+  repeated Header original_headers = 5;
+  bytes original_payload = 6;
+  google.protobuf.Timestamp original_published_at = 7;
+  // Failure context.
+  string consumer = 8;
+  uint32 delivery_count = 9;
+  ErrorClass error_class = 10;
+  string error_code = 11; // stable machine code, e.g. "FFPROBE_NO_STREAMS"
+  string error_message = 12; // human-readable, truncated to 4 KiB
+  bool redrivable = 13; // false for INVALID_MEDIA / CHECKSUM_MISMATCH
+  affogato.common.v1.ChunkRef chunk = 14; // best effort; unset if undecodable
+  string worker_instance = 15; // pod name
+}
